@@ -8,10 +8,13 @@ from .geometry import Geometry
 
 def create_geom(wkb_buf):
     # wkb buffer to shapely
+    # TODO: MAYBE HANDLE NONE?
     geom = Geometry(wkb_buf)
     return geom
 
 def dump_geom(geom):
+    # geometry class to wkb buffer
+    # TODO: MAYBE HANDLE NONE?
     wkb_buf = geom.dump_wkb()
     return wkb_buf
 

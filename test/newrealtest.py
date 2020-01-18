@@ -3,12 +3,15 @@ import postqlite
 import json
 import pythongis as pg
 
+# TODO: DOUBLE CHECK THAT NULL VALUES ARE HANDLED THROUGHOUT
+
 def viewresult(res):
     vz = pg.VectorData()
     for r in res:
         props = [] #r[:-1] if len(r) > 1 else []
-        geoj = json.loads(r[-1]) # assumes last value of row is returned as geojson string
-        vz.add_feature(props, geoj)
+        if r[-1]:
+            geoj = json.loads(r[-1]) # assumes last value of row is returned as geojson string
+            vz.add_feature(props, geoj)
     vz.view()
 
 # init
@@ -28,9 +31,9 @@ for row,geoj in d.stream():
 print 'full', cur.execute('select count(oid) from test').fetchone()
 
 # features that intersect eachother
-##print 'self intersect'
-##for row in cur.execute('select left.name, right.name from test as left, test as right where st_intersects(left.geom, right.geom)'):
-##    print row
+print 'self intersect'
+for row in cur.execute('select left.name, right.name from test as left, test as right where st_intersects(left.geom, right.geom)'):
+    print row
 
 # view all types
 print 'types'
@@ -44,9 +47,9 @@ viewresult(res)
 
 # view all as bboxes
 print 'bboxes'
-for r in cur.execute('select name,st_xmin(geom),st_ymin(geom),st_xmax(geom),st_ymax(geom) from test limit 10'):
+for r in cur.execute('select name,st_xmin(geom),st_ymin(geom),st_xmax(geom),st_ymax(geom) from test where geom is not null limit 10'):
     print r
-res = cur.execute('select name,st_asGeoJSON(st_makeEnvelope(st_xmin(geom),st_ymin(geom),st_xmax(geom),st_ymax(geom))) from test')
+res = cur.execute('select name,st_asGeoJSON(st_makeEnvelope(st_xmin(geom),st_ymin(geom),st_xmax(geom),st_ymax(geom))) from test where geom is not null')
 viewresult(res)
 
 # check union

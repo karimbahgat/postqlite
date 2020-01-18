@@ -38,34 +38,36 @@ def register_funcs(conn):
     conn.create_function('st_GeomFromGeoJSON', 1, lambda geojstr: Geometry(asShape(json.loads(geojstr)).wkb).dump_wkb() )
 
     # representation
-    conn.create_function('st_AsText', 1, lambda wkb: Geometry(wkb).as_WKT() )
-    conn.create_function('st_AsGeoJSON', 1, lambda wkb: json.dumps(Geometry(wkb).as_GeoJSON()) )
+    conn.create_function('st_AsText', 1, lambda wkb: Geometry(wkb).as_WKT() if wkb != None else None )
+    conn.create_function('st_AsGeoJSON', 1, lambda wkb: json.dumps(Geometry(wkb).as_GeoJSON()) if wkb != None else None )
     
     # brings back simple types
-    conn.create_function('st_type', 1, lambda wkb: Geometry(wkb).type() )
-    conn.create_function('st_area', 1, lambda wkb: Geometry(wkb).area() )
-    conn.create_function('st_xmin', 1, lambda wkb: Box2D(wkb).xmin )
-    conn.create_function('st_xmax', 1, lambda wkb: Box2D(wkb).xmax )
-    conn.create_function('st_ymin', 1, lambda wkb: Box2D(wkb).ymin )
-    conn.create_function('st_ymax', 1, lambda wkb: Box2D(wkb).ymax )
+    conn.create_function('st_type', 1, lambda wkb: Geometry(wkb).type() if wkb != None else None )
+    conn.create_function('st_area', 1, lambda wkb: Geometry(wkb).area() if wkb != None else None )
+    conn.create_function('st_xmin', 1, lambda wkb: Box2D(wkb).xmin if wkb != None else None )
+    conn.create_function('st_xmax', 1, lambda wkb: Box2D(wkb).xmax if wkb != None else None )
+    conn.create_function('st_ymin', 1, lambda wkb: Box2D(wkb).ymin if wkb != None else None )
+    conn.create_function('st_ymax', 1, lambda wkb: Box2D(wkb).ymax if wkb != None else None )
 
-    conn.create_function('st_intersects', 2, lambda wkb,otherwkb: Geometry(wkb).intersects(Geometry(otherwkb)) )
-    conn.create_function('st_disjoint', 2, lambda wkb,otherwkb: Geometry(wkb).disjoint(Geometry(otherwkb)) )
+    conn.create_function('st_intersects', 2, lambda wkb,otherwkb: Geometry(wkb).intersects(Geometry(otherwkb)) if wkb != None and otherwkb != None else None )
+    conn.create_function('st_disjoint', 2, lambda wkb,otherwkb: Geometry(wkb).disjoint(Geometry(otherwkb)) if wkb != None and otherwkb != None else None )
 
-    conn.create_function('st_distance', 2, lambda wkb,otherwkb: Geometry(wkb).distance(Geometry(otherwkb)) )
+    conn.create_function('st_distance', 2, lambda wkb,otherwkb: Geometry(wkb).distance(Geometry(otherwkb)) if wkb != None else None )
 
     # brings back the object
-    conn.create_function('st_centroid', 1, lambda wkb: Geometry(wkb).centroid().dump_wkb() )
-    conn.create_function('st_buffer', 2, lambda wkb,dist: Geometry(wkb).buffer(dist).dump_wkb() )
-    conn.create_function('st_intersection', 2, lambda wkb,otherwkb: Geometry(wkb).intersection(Geometry(otherwkb)).dump_wkb() )
-    conn.create_function('st_difference', 2, lambda wkb,otherwkb: Geometry(wkb).difference(Geometry(otherwkb)).dump_wkb() )
-    conn.create_function('st_union', 2, lambda wkb,otherwkb: Geometry(wkb).union(Geometry(otherwkb)).dump_wkb() )
-
-    conn.create_function('st_simplify', 2, lambda wkb,tol: Geometry(wkb).simplify(tol, preserve_topology=False).dump_wkb() )
-    conn.create_function('st_simplifyPreserveTopology', 2, lambda wkb,tol: Geometry(wkb).simplify(tol, preserve_topology=True).dump_wkb() )
+    conn.create_function('st_centroid', 1, lambda wkb: Geometry(wkb).centroid().dump_wkb() if wkb != None else None )
+    conn.create_function('st_buffer', 2, lambda wkb,dist: Geometry(wkb).buffer(dist).dump_wkb() if wkb != None else None )
     
-    conn.create_function('box2d', 1, lambda wkb: Box2D(wkb) )
-    conn.create_function('st_expand', 1, lambda wkb,dist: Box2D(wkb).expand(dist) )
+    conn.create_function('st_intersection', 2, lambda wkb,otherwkb: Geometry(wkb).intersection(Geometry(otherwkb)).dump_wkb() if wkb != None and otherwkb != None else None )
+    conn.create_function('st_difference', 2, lambda wkb,otherwkb: Geometry(wkb).difference(Geometry(otherwkb)).dump_wkb() if wkb != None and otherwkb != None else None )
+    conn.create_function('st_union', 2, lambda wkb,otherwkb: Geometry(wkb).union(Geometry(otherwkb)).dump_wkb() if wkb != None and otherwkb != None else None )
+
+    conn.create_function('st_simplify', 2, lambda wkb,tol: Geometry(wkb).simplify(tol, preserve_topology=False).dump_wkb() if wkb != None else None )
+    conn.create_function('st_simplifyPreserveTopology', 2, lambda wkb,tol: Geometry(wkb).simplify(tol, preserve_topology=True).dump_wkb() if wkb != None else None )
+
+    # (not done...)    
+    conn.create_function('box2d', 1, lambda wkb: Box2D(wkb) if wkb != None else None )
+    conn.create_function('st_expand', 1, lambda wkb,dist: Box2D(wkb).expand(dist) if wkb != None else None )
 
 def register_aggs(conn):
     conn.create_aggregate('st_extent', 1, ST_Extent)
@@ -82,6 +84,8 @@ class ST_Extent(object):
         self.ymax = None
 
     def step(self, wkb):
+        if wkb is None:
+            return
         box = Box2D(wkb)
         self.xmin = min(self.xmin, box.xmin)
         self.ymin = min(self.ymin, box.ymin)
@@ -103,6 +107,8 @@ class ST_Union(object):
         self.result = None
 
     def step(self, wkb):
+        if wkb is None:
+            return
         geom = Geometry(wkb)
         geom._load_shapely()
         self.shapes.append(geom._shp)
@@ -128,7 +134,6 @@ class ST_Union(object):
                 self.result = chunk_result
 
         resultgeom = Geometry(self.result.wkb)
-        print resultgeom.type()
         return resultgeom.dump_wkb()
 
 # class
@@ -407,6 +412,8 @@ class Geometry(object):
     def dump_wkb(self):
         # shapely to wkb buffer
         if self._shp:
+            if self._shp.is_empty:
+                return None
             wkb = self._shp.wkb
         else:
             wkb = self._wkb
