@@ -18,5 +18,6 @@ def connect(path, *args, **kwargs):
     #stats.register_funcs(self.db)
     #ops.register_funcs(self.db)
     geometry.register_funcs(conn)
+    geometry.register_aggs(conn)
 
     return conn
