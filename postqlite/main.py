@@ -4,6 +4,7 @@ import sqlite3
 #from . import ops
 #from . import stats
 from .vector import geometry
+from .raster import raster
 
 
 def connect(path, *args, **kwargs):
@@ -19,5 +20,7 @@ def connect(path, *args, **kwargs):
     #ops.register_funcs(self.db)
     geometry.register_funcs(conn)
     geometry.register_aggs(conn)
+    raster.register_funcs(conn)
+    raster.register_aggs(conn)
 
     return conn
