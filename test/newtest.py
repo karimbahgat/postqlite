@@ -18,6 +18,7 @@ geom._shp = shp
 geoms = ((geom,geom) for _ in xrange(100))
 cur.executemany('insert into test values (?,?)', geoms)
 
+
 #################
 # constructors
 
@@ -49,6 +50,7 @@ for row in cur.execute('''select st_GeomFromGeoJSON('{"type":"Point","coordinate
     print row[0].bbox()
     break
 
+
 #################
 # representation
 
@@ -66,6 +68,7 @@ for row in cur.execute('select st_asGeoJSON(st_MakeEnvelope(0,0,10,10)) from tes
 
 # as svg
 # ...
+
 
 #################
 # basic info
@@ -89,11 +92,16 @@ for row in cur.execute('select st_xmin(geom),st_ymin(geom),st_xmax(geom),st_ymax
     break
 
 # box2d
-# TODO: not sure yet how to handle box2d objects...
-##print 'box2d'
-##for row in cur.execute('select st_box2d(geom) from test'):
-##    print row
-##    break
+print 'box2d'
+for row in cur.execute('select st_asText(box2d(geom)) from test'):
+    print row
+    break
+
+# box2d expand
+print 'box2d expand'
+for row in cur.execute('select st_asText(st_expand(geom, 0.666)) from test'):
+    print row
+    break
 
 # area
 print 'area'
@@ -166,6 +174,7 @@ for row in cur.execute('select st_astext(st_simplifyPreserveTopology(geom,0.01))
     break
 
 # transform (ie crs reproject)
+# ...
 
 
 ##############
@@ -178,11 +187,10 @@ for row in cur.execute('select st_type(st_union(geom)) from test'):
     break
 
 # agg extent
-# TODO: not sure yet how to handle box2d objects...
-##print 'reading the aggregate bounds'
-##for row in cur.execute('select st_extent(geom) from test'):
-##    print row
-##    break
+print 'reading the aggregate bounds'
+for row in cur.execute('select st_asText(st_extent(geom)) from test'):
+    print row
+    break
 
 
 

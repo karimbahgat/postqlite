@@ -3,7 +3,7 @@ from sqlite3 import Binary
 
 from shapely.wkb import loads as wkb_loads
 from shapely.wkt import loads as wkt_loads
-from shapely.geometry import asShape, Point, box
+from shapely.geometry import asShape, Point, MultiPoint, box
 from shapely.ops import unary_union
 
 from struct import unpack, unpack_from
@@ -45,10 +45,12 @@ def register_funcs(conn):
     # brings back simple types
     conn.create_function('st_Type', 1, lambda wkb: Geometry(wkb).type() if wkb != None else None )
     conn.create_function('st_Area', 1, lambda wkb: Geometry(wkb).area() if wkb != None else None )
-    conn.create_function('st_Xmin', 1, lambda wkb: Box2D(wkb).xmin if wkb != None else None )
-    conn.create_function('st_Xmax', 1, lambda wkb: Box2D(wkb).xmax if wkb != None else None )
-    conn.create_function('st_Ymin', 1, lambda wkb: Box2D(wkb).ymin if wkb != None else None )
-    conn.create_function('st_Ymax', 1, lambda wkb: Box2D(wkb).ymax if wkb != None else None )
+    conn.create_function('st_Xmin', 1, lambda wkb: Geometry(wkb).bbox()[0] if wkb != None else None )
+    conn.create_function('st_Xmax', 1, lambda wkb: Geometry(wkb).bbox()[2] if wkb != None else None )
+    conn.create_function('st_Ymin', 1, lambda wkb: Geometry(wkb).bbox()[1] if wkb != None else None )
+    conn.create_function('st_Ymax', 1, lambda wkb: Geometry(wkb).bbox()[3] if wkb != None else None )
+    conn.create_function('Box2d', 1, lambda wkb: Geometry(wkb).box2d().dump_wkb() if wkb != None else None )
+    conn.create_function('st_Expand', 2, lambda wkb,dist: Geometry(wkb).box2d_expand(dist).dump_wkb() if wkb != None else None )
 
     conn.create_function('st_Intersects', 2, lambda wkb,otherwkb: Geometry(wkb).intersects(Geometry(otherwkb)) if wkb != None and otherwkb != None else None )
     conn.create_function('st_Disjoint', 2, lambda wkb,otherwkb: Geometry(wkb).disjoint(Geometry(otherwkb)) if wkb != None and otherwkb != None else None )
@@ -66,10 +68,6 @@ def register_funcs(conn):
     conn.create_function('st_Simplify', 2, lambda wkb,tol: Geometry(wkb).simplify(tol, preserve_topology=False).dump_wkb() if wkb != None else None )
     conn.create_function('st_SimplifyPreserveTopology', 2, lambda wkb,tol: Geometry(wkb).simplify(tol, preserve_topology=True).dump_wkb() if wkb != None else None )
 
-    # (not done...) 
-    conn.create_function('Box2d', 1, lambda wkb: Box2D(wkb) if wkb != None else None )
-    conn.create_function('st_Expand', 1, lambda wkb,dist: Box2D(wkb).expand(dist) if wkb != None else None )
-
 def register_aggs(conn):
     conn.create_aggregate('st_Extent', 1, ST_Extent)
     conn.create_aggregate('st_Union', 1, ST_Union)
@@ -79,27 +77,35 @@ def register_aggs(conn):
 
 class ST_Extent(object):
     def __init__(self):
-        self.xmin = None
-        self.ymin = None
-        self.xmax = None
-        self.ymax = None
+        self.chunksize = 10000
+        self.boxes = []
+        self.result = None
 
     def step(self, wkb):
         if wkb is None:
             return
-        box = Box2D(wkb)
-        self.xmin = min(self.xmin, box.xmin)
-        self.ymin = min(self.ymin, box.ymin)
-        self.xmax = max(self.xmax, box.xmax)
-        self.ymax = max(self.ymax, box.ymax)
+        self.boxes.append(Geometry(wkb).bbox())
+        if len(self.boxes) >= self.chunksize:
+            if self.result:
+                # include any previous result
+                self.boxes.append(self.result) 
+            xmins,ymins,xmaxs,ymaxs = zip(*self.boxes)
+            self.result = min(xmins),min(ymins),max(xmaxs),max(ymaxs)
+            self.boxes = []
 
     def finalize(self):
-        box = Box2D()
-        box.xmin = self.xmin
-        box.ymin = self.ymin
-        box.xmax = self.xmax
-        box.ymax = self.ymax
-        return box.wkb
+        if self.boxes:
+            # any remaining boxes
+            if self.result:
+                # include any previous result
+                self.boxes.append(self.result) 
+            xmins,ymins,xmaxs,ymaxs = zip(*self.boxes)
+            self.result = min(xmins),min(ymins),max(xmaxs),max(ymaxs)
+            self.boxes = []
+        # return result
+        xmin,ymin,xmax,ymax = self.result
+        pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
+        return pointbox.dump_wkb()
 
 class ST_Union(object):
     def __init__(self):
@@ -139,117 +145,6 @@ class ST_Union(object):
 
 # class
 
-class Box2D(object):
-
-    def __init__(self, wkb):
-        # available funcs:
-        # https://postgis.net/docs/PostGIS_Special_Functions_Index.html#PostGIS_BoxFunctions
-        # wkb structure
-        # https://www.gaia-gis.it/gaia-sins/BLOB-Geometry.html
-        # NOTE: maybe its not worth it, loading to shapely might be faster
-        # ...
-        # NOTE: actually is ca 10% faster than shapely for complex polys, and 5x for points. 
-        # TODO: switch to faster version, build fmt string and unpack all coords in one call
-        # ...
-
-        # funky testing of polygon type (faster)
-##        fmt = ''
-##        byteorder = _wkb_byteorder(wkb)
-##        fmt += 'x'
-##        off = 1
-##        wkbtyp = unpack_from(byteorder+'i', wkb, off)[0]
-##        fmt += '4x'
-##        off += 4
-##        num = unpack_from(byteorder+'i', wkb, off)[0]
-##        fmt += '4x'
-##        off += 4
-##        
-##        for i in range(num):
-##            pnum = unpack_from(byteorder+'i', wkb, off)[0]
-##            #fmt += '4x' + 'dd'*pnum
-##            if i == 0:
-##                # exterior
-##                fmt += '4x' + '{}d'.format(pnum*2)
-##            else:
-##                # ignore hole
-##                fmt += '4x' + '{}x'.format(pnum*2*8)
-##            off += 4 + 16*pnum
-##        #print num,fmt
-##        flat = unpack_from(byteorder+fmt, wkb)
-##        #xs,ys = flat[0::2],flat[1::2]
-##
-##        self.xmin = min(islice(flat,0,None,2))
-##        self.ymin = min(islice(flat,1,None,2))
-##        self.xmax = max(islice(flat,0,None,2))
-##        self.ymax = max(islice(flat,1,None,2))
-##
-##        return
-
-        # real is below...
-
-        def ringbox(stream):
-            pnum = unpack(byteorder+'i', stream.read(4))[0]
-            flat = unpack(byteorder+'{}d'.format(pnum*2), stream.read(16*pnum))
-            #xs,ys = flat[0::2],flat[1::2]
-            #return min(xs),min(ys),max(xs),max(ys)
-            return (min(islice(flat,0,None,2)),
-                    min(islice(flat,1,None,2)),
-                    max(islice(flat,0,None,2)),
-                    max(islice(flat,1,None,2)) )
-        
-        def polybox(stream):
-            # only check exterior, ie the first ring
-            #print 'poly tell',stream.tell()
-            num = unpack(byteorder+'i', stream.read(4))[0]
-            xmin,ymin,xmax,ymax = ringbox(stream)
-            # skip holes, ie remaining rings
-            if num > 1:
-                for _ in range(num-1):
-                    pnum = unpack(byteorder+'i', stream.read(4))[0]
-                    unpack(byteorder+'{}x'.format(pnum*2*8), stream.read(16*pnum))
-            return xmin,ymin,xmax,ymax
-        
-        def multi(stream):
-            # 1 byte and one 4bit int class type of 1,2,3: point line or poly
-            stream.read(5)
-            return stream
-
-        stream = BytesIO(wkb)
-        byteorder = _wkb_byteorder(stream.read(1))
-        wkbtyp = unpack(byteorder+'i', stream.read(4))[0]
-        typ = wkbtype_to_shptype[wkbtyp]
-        if typ == 'Point':
-            x,y = unpack(byteorder+'dd', stream.read(8*2))
-            xmin = xmax = x
-            ymin = ymax = y
-        elif typ == 'LineString':
-            xmin,ymin,xmax,ymax = ringbox(stream)
-        elif typ == 'Polygon':
-            xmin,ymin,xmax,ymax = polybox(stream)
-        elif typ == 'MultiPoint':
-            num = unpack(byteorder+'i', stream.read(4))[0]
-            flat = unpack(byteorder+'5xdd'*(num), stream.read((5+16)*num))
-            xmin,ymin,xmax,ymax = (min(islice(flat,0,None,2)),
-                                    min(islice(flat,1,None,2)),
-                                    max(islice(flat,0,None,2)),
-                                    max(islice(flat,1,None,2)) )
-        elif typ == 'MultiLineString':
-            num = unpack(byteorder+'i', stream.read(4))[0]
-            xmins,ymins,xmaxs,ymaxs = zip(*(ringbox(multi(stream)) for _ in range(num)))
-            xmin,ymin,xmax,ymax = min(xmins),min(ymins),max(xmaxs),max(ymaxs)
-        elif typ == 'MultiPolygon':
-            num = unpack(byteorder+'i', stream.read(4))[0]
-            xmins,ymins,xmaxs,ymaxs = zip(*(polybox(multi(stream)) for _ in range(num)))
-            xmin,ymin,xmax,ymax = min(xmins),min(ymins),max(xmaxs),max(ymaxs)
-            
-        self.xmin = xmin
-        self.ymin = ymin
-        self.xmax = xmax
-        self.ymax = ymax
-
-    def expand(self, units):
-        pass
-
 class Geometry(object):
 
     def __init__(self, wkb):
@@ -270,12 +165,128 @@ class Geometry(object):
     def bbox(self):
         if self._shp:
             # shapely already loaded, fastest to let shapely do it
-            return self._shp.bounds
+            xmin,ymin,xmax,ymax = self._shp.bounds
+            return xmin,ymin,xmax,ymax
         else:
             # create directly from wkb, avoid overhead of converting to shapely
-            # OR MAYBE PYTHON BBOX IS TOO SLOW? TEST! 
-            box = Box2D(self._wkb)
-            return (box.xmin,box.ymin,box.xmax,box.ymax)
+            # OR MAYBE PYTHON BBOX IS TOO SLOW? TEST!
+            
+            # available funcs:
+            # https://postgis.net/docs/PostGIS_Special_Functions_Index.html#PostGIS_BoxFunctions
+            # wkb structure
+            # https://www.gaia-gis.it/gaia-sins/BLOB-Geometry.html
+            # NOTE: maybe its not worth it, loading to shapely might be faster
+            # ...
+            # NOTE: actually is ca 10% faster than shapely for complex polys, and 5x for points. 
+            # TODO: switch to faster version, build fmt string and unpack all coords in one call
+            # ...
+
+            # funky testing of polygon type (faster)
+    ##        fmt = ''
+    ##        byteorder = _wkb_byteorder(wkb)
+    ##        fmt += 'x'
+    ##        off = 1
+    ##        wkbtyp = unpack_from(byteorder+'i', wkb, off)[0]
+    ##        fmt += '4x'
+    ##        off += 4
+    ##        num = unpack_from(byteorder+'i', wkb, off)[0]
+    ##        fmt += '4x'
+    ##        off += 4
+    ##        
+    ##        for i in range(num):
+    ##            pnum = unpack_from(byteorder+'i', wkb, off)[0]
+    ##            #fmt += '4x' + 'dd'*pnum
+    ##            if i == 0:
+    ##                # exterior
+    ##                fmt += '4x' + '{}d'.format(pnum*2)
+    ##            else:
+    ##                # ignore hole
+    ##                fmt += '4x' + '{}x'.format(pnum*2*8)
+    ##            off += 4 + 16*pnum
+    ##        #print num,fmt
+    ##        flat = unpack_from(byteorder+fmt, wkb)
+    ##        #xs,ys = flat[0::2],flat[1::2]
+    ##
+    ##        self.xmin = min(islice(flat,0,None,2))
+    ##        self.ymin = min(islice(flat,1,None,2))
+    ##        self.xmax = max(islice(flat,0,None,2))
+    ##        self.ymax = max(islice(flat,1,None,2))
+    ##
+    ##        return
+
+            # real is below...
+            def ringbox(stream):
+                pnum = unpack(byteorder+'i', stream.read(4))[0]
+                flat = unpack(byteorder+'{}d'.format(pnum*2), stream.read(16*pnum))
+                #xs,ys = flat[0::2],flat[1::2]
+                #return min(xs),min(ys),max(xs),max(ys)
+                return (min(islice(flat,0,None,2)),
+                        min(islice(flat,1,None,2)),
+                        max(islice(flat,0,None,2)),
+                        max(islice(flat,1,None,2)) )
+            
+            def polybox(stream):
+                # only check exterior, ie the first ring
+                #print 'poly tell',stream.tell()
+                num = unpack(byteorder+'i', stream.read(4))[0]
+                xmin,ymin,xmax,ymax = ringbox(stream)
+                # skip holes, ie remaining rings
+                if num > 1:
+                    for _ in range(num-1):
+                        pnum = unpack(byteorder+'i', stream.read(4))[0]
+                        unpack(byteorder+'{}x'.format(pnum*2*8), stream.read(16*pnum))
+                return xmin,ymin,xmax,ymax
+            
+            def multi(stream):
+                # 1 byte and one 4bit int class type of 1,2,3: point line or poly
+                stream.read(5)
+                return stream
+
+            stream = BytesIO(self._wkb)
+            byteorder = _wkb_byteorder(stream.read(1))
+            wkbtyp = unpack(byteorder+'i', stream.read(4))[0]
+            typ = wkbtype_to_shptype[wkbtyp]
+            if typ == 'Point':
+                x,y = unpack(byteorder+'dd', stream.read(8*2))
+                xmin = xmax = x
+                ymin = ymax = y
+            elif typ == 'LineString':
+                xmin,ymin,xmax,ymax = ringbox(stream)
+            elif typ == 'Polygon':
+                xmin,ymin,xmax,ymax = polybox(stream)
+            elif typ == 'MultiPoint':
+                num = unpack(byteorder+'i', stream.read(4))[0]
+                flat = unpack(byteorder+'5xdd'*(num), stream.read((5+16)*num))
+                xmin,ymin,xmax,ymax = (min(islice(flat,0,None,2)),
+                                        min(islice(flat,1,None,2)),
+                                        max(islice(flat,0,None,2)),
+                                        max(islice(flat,1,None,2)) )
+            elif typ == 'MultiLineString':
+                num = unpack(byteorder+'i', stream.read(4))[0]
+                xmins,ymins,xmaxs,ymaxs = zip(*(ringbox(multi(stream)) for _ in range(num)))
+                xmin,ymin,xmax,ymax = min(xmins),min(ymins),max(xmaxs),max(ymaxs)
+            elif typ == 'MultiPolygon':
+                num = unpack(byteorder+'i', stream.read(4))[0]
+                xmins,ymins,xmaxs,ymaxs = zip(*(polybox(multi(stream)) for _ in range(num)))
+                xmin,ymin,xmax,ymax = min(xmins),min(ymins),max(xmaxs),max(ymaxs)
+
+            return xmin,ymin,xmax,ymax
+
+    def box2d(self):
+        xmin,ymin,xmax,ymax = self.bbox()
+        pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
+        return pointbox
+
+    def box2d_expand(self, units):
+        xmin,ymin,xmax,ymax = self.bbox()
+        w = xmax-xmin
+        h = ymax-ymin
+        xmin -= units
+        xmax += units
+        ymin -= units
+        ymax += units
+        pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
+        return pointbox
 
     def area(self):
         # temp
