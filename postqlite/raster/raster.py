@@ -145,6 +145,10 @@ class Raster(object):
     # metadata
 
     def _load_header(self):
+        # TODO: its possible that each reference to rast column in query creates a new raster instance from the db for each
+        # in that case, storing ._header doesnt help and loading entire header becomes very duplicative
+        # explore only loading the bytes needed for each header param
+        # OR access a cached version of the raster instance based on the wkb bytes? 
         (endian,) = unpack_from('<b', self._wkb)
 
         if endian == 0:

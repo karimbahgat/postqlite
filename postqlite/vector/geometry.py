@@ -145,11 +145,33 @@ class ST_Union(object):
 
 # class
 
+CACHE = dict()
+
 class Geometry(object):
 
     def __init__(self, wkb):
         self._wkb = wkb
         self._shp = None
+
+    def _load_shapely(self):
+        '''wkb buffer to shapely'''
+        # TODO: its possible that each reference to geom column in query creates a new geom instance from the db for each
+        # in that case, storing ._shp doesnt help and shapely creation becomes very duplicative
+        # explore accessing a dict of cached geometry instances based on the wkb bytes?
+##        wkb_bytes = bytes(self._wkb)
+##        cached = CACHE.get(wkb_bytes, None)
+##        if cached:
+##            #print 'getting cached'
+##            shp = cached
+##        else:
+##            #print 'loading new'
+##            shp = wkb_loads(wkb_bytes)
+##            CACHE[wkb_bytes] = shp
+##        self._shp = shp
+
+        # non-cache approach
+        self._shp = wkb_loads(bytes(self._wkb))
+        self._wkb = None # avoid storing both shp and wkb at same time
 
     # dont require shapely (ie reading binary directly)
 
@@ -336,11 +358,6 @@ class Geometry(object):
 
     # require shapely
 
-    def _load_shapely(self):
-        # wkb buffer to shapely
-        self._shp = wkb_loads(bytes(self._wkb))
-        self._wkb = None # avoid storing both shp and wkb at same time
-
     def intersects(self, othergeom):
         if not self._shp:
             self._load_shapely()
@@ -429,7 +446,7 @@ class Geometry(object):
             wkb = self._shp.wkb
         else:
             wkb = self._wkb
-        buf = Binary(wkb)
+        buf = Binary(wkb) # should this be used here, or only in the final serializer? 
         return buf
 
 

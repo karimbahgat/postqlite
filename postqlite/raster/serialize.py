@@ -8,7 +8,7 @@ from .raster import Raster
 
 def create_rast(wkb_buf):
     # wkb buffer to raster
-    rast = Raster(bytes(wkb_buf))
+    rast = Raster(wkb_buf)
     return rast
 
 def dump_rast(rast):
