@@ -78,6 +78,7 @@ def register_funcs(conn):
 
 def register_aggs(conn):
     conn.create_aggregate('st_SameAlignment', 1, ST_SameAlignment)
+    conn.create_aggregate('st_Union', -1, ST_Union)
 
 
 # classes
@@ -105,71 +106,64 @@ class ST_SameAlignment(object):
         success = not self.failed
         return success
 
-##class Band(object):
-##    def __init__(self, rast, data=None, dtype=None, width=None, height=None, initialvalue=0, nodataval=None):
-##        self.rast = rast
-##        # data is either None or np.array
-##        self._data = data
-##        self.dtype = dtype
-##        self.width = width
-##        self.height = height
-##        self.initialvalue = initialvalue
-##        self.nodataval = nodataval
-##
-##    def __repr__(self):
-##        return "<Band object: dtype={dtype} size={size} nodataval={nodataval}>".format(dtype=self.dtype,
-##                                                                                       size=(self.width,self.height),
-##                                                                                       nodataval=self.nodataval)
-##    
-##
-##    def data(self, bbox=None):        
-##        # if file source, use the reader to return the data, but do not store the data in memory
-##        if self.rast and self.rast.filepath:
-##            bandnum = self.rast.bands.index(self)
-##            data = self.rast.reader.data(bandnum, bbox)
-##
-##        else:
-##            # create empty data if not exists
-##            data = self._data
-##            if data is None:
-##                data = np.full((self.width,self.height), initialvalue, dtype=dtype)
-##                self._data = data
-##
-##            # crop to bbox
-##            if bbox:
-##                x1,y1,x2,y2 = bbox
-##                x2, y2 = min(x12, self.width), min(y2, self.height)
-##                w,h = x2-x1, y2-y1
-##                data = data[y1:y2, x1:x2]
-##
-##        return data
-##
-##    def crop(self, bbox):
-##        data = self.data(bbox)
-##        w, h = data.shape[1], data.shape[0]
-##        band = Band(None, data, data.dtype, w, h, self.nodataval)
-##        return band
-##
-##    def wkb_dict(self):
-##        data = self.data() # force loading the data
-##        dtypes = ['bool', None, None, 'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'float32', 'float64']
-##        pixtype = dtypes.index(str(self.dtype))
-##                               
-##        dct = {'isOffline': self.rast and bool(self.rast.filepath),
-##               'hasNodataValue': self.nodataval is not None,
-##               'isNodataValue': np.all(self.data == self.nodataval),
-##               'ndarray': data,
-##               'pixtype': pixtype,
-##               }
-##
-##        dct['nodata'] = self.nodataval if dct['hasNodataValue'] else 0
-##        
-##        if dct['isOffline']:
-##            bandnum = self.rast.bands.index(self)
-##            dct['bandNumber'] = bandnum
-##            dct['path'] = self.rast.filepath
-##            
-##        return dct
+class ST_Union(object):
+    # NOTE: currently only unions one band, whereas postgis does all if not specified
+    def __init__(self):
+        self.result = None
+
+    def step(self, *args):
+        if args[0] is None:
+            return
+
+        # parse args
+        args = list(args)
+        args[0] = Raster(args[0])
+        
+        # setof raster rast
+        if len(args) == 1 and isinstance(args[0], Raster):
+            rast = args[0]
+            nband = 1
+            uniontype = 'last'
+        # setof raster rast, integer nband
+        elif len(args) == 2 and isinstance(args[0], Raster) and isinstance(args[1], int):
+            rast,nband = args[:2]
+            uniontype = 'last'
+        # setof raster rast, text uniontype
+        elif len(args) == 2 and isinstance(args[0], Raster) and isinstance(args[1], basestring):
+            rast,uniontype = args[:2]
+            nband = 1
+        # setof raster rast, integer nband, text uniontype
+        elif len(args) == 3 and isinstance(args[0], Raster) and isinstance(args[1], int) and isinstance(args[2], basestring):
+            rast,nband,uniontype = args
+        # else
+        else:
+            raise Exception('Invalid function args: {}'.format(args))
+        
+        if self.result:
+            # update the cumulative union raster
+            if uniontype == 'first':
+                expr = '[rast1]'
+            elif uniontype == 'last':
+                expr = '[rast2]'
+            elif uniontype == 'min':
+                expr = 'min([rast1], [rast2])'
+            elif uniontype == 'max':
+                expr = 'max([rast1], [rast2])'
+            elif uniontype == 'sum':
+                expr = '[rast1] + [rast2]'
+            # mean
+            # count
+            # range
+            self.result = self.result.mapalgebra(nband, rast, nband, expr, None, 'union')
+            
+        else:
+            # first one
+            self.result = rast
+
+    def finalize(self):
+        wkb = self.result.dump_wkb()
+        return wkb
+    
 
 class Raster(object):
     def __init__(self, wkb):
@@ -658,20 +652,43 @@ class Raster(object):
 
         # parse args
         assert len(args) >= 2
+        
         # single mode
         if isinstance(args[0], int) and isinstance(args[1], basestring):
             # nband, pixeltype, expression, nodataval=NULL
             nband, pixeltype, expression = args[:3]
             nodataval = args[3] if len(args) >= 4 else None
             mode = 'single'
+            
         elif isinstance(args[0], basestring) and isinstance(args[1], basestring):
             # nband, pixeltype, expression, nodataval=NULL
             pixeltype, expression = args[:2]
             nband = 1
             nodataval = args[2] if len(args) >= 3 else None
             mode = 'single'
+            
         # multi mode
-        # ...
+        elif isinstance(args[0], int) and isinstance(args[1], Raster):
+            # integer nband1, raster rast2, integer nband2, text expression, text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
+            nband1,rast2,nband2,expression = args[:4]
+            pixeltype = args[4] if len(args) >= 5 else None
+            extenttype = args[5] if len(args) >= 6 else 'intersection'
+            nodata1expr = args[6] if len(args) >= 7 else None
+            nodata2expr = args[7] if len(args) >= 8 else None
+            nodatanodataexpr = args[8] if len(args) >= 9 else None
+            mode = 'multi'
+            
+        elif isinstance(args[0], Raster) and isinstance(args[1], basestring):
+            # raster rast2, text expression, text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
+            rast2,expression = args[:2]
+            nband1,nband2 = 1,1 # assume first bands
+            pixeltype = args[2] if len(args) >= 3 else None
+            extenttype = args[3] if len(args) >= 4 else 'intersection'
+            nodata1expr = args[4] if len(args) >= 5 else None
+            nodata2expr = args[5] if len(args) >= 6 else None
+            nodatanodataexpr = args[6] if len(args) >= 7 else None
+            mode = 'multi'
+            
         else:
             raise Exception('Invalid function args: {}'.format(args))
 
@@ -681,22 +698,18 @@ class Raster(object):
         # init
         wkb = b''
 
-        # copy raster header
-        #rastheadersize = 1+60 #calcsize('bHHddddddIHH')
-        #wkb += self._wkb[:rastheadersize]
-
-        # OR edit and write raster header from scratch
-        header = self._header.copy()
-        endianFmt = header['endian']
-        header['endian'] = 1 if header['endian'] == '<' else 0
-        header['numbands'] = 1
-        if nodataval != None:
-            header['nodataval'] = nodataval
-        headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
-        wkb += pack('<b', header['endian'])
-        wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
-
         if mode == 'single':
+            # edit and write raster header from scratch
+            header = self._header.copy()
+            endianFmt = header['endian']
+            header['endian'] = 1 if header['endian'] == '<' else 0
+            header['numbands'] = 1
+            if nodataval != None:
+                header['nodataval'] = nodataval
+            headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
+            wkb += pack('<b', header['endian'])
+            wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
+            
             # get and update band headers
             bandhead = self._band_header(nband)
             bandhead['isOffline'] = False
@@ -710,13 +723,14 @@ class Raster(object):
             # set environment
             arr = self.data(nband)
             arr = arr.astype(np.dtype(pixeltype))
-            locenv = {'rast': arr}
+            locenv = {'rast': arr, 'np': np}
 
             # parse expression
             expression = expression.lower()
 
             def sql2py(sql):
                 # TODO: support multiple and/or statements
+                # ... 
 
                 # convert rast references
                 sql = sql.replace('[rast]', 'rast')
@@ -724,6 +738,10 @@ class Raster(object):
                 # equal condition
                 # TODO: Need fix if = without spaces
                 sql = sql.replace(' = ', ' == ')
+
+                # max min
+                sql = sql.replace('max(', 'np.maximum(')
+                sql = sql.replace('min(', 'np.minimum(')
                 
                 # between clause, ie "col BETWEEN v1 AND v2"
                 if 'between' in sql:
@@ -787,7 +805,205 @@ class Raster(object):
             wkb += databytes
 
         elif mode == 'multi':
-            raise NotImplemented
+
+            assert self.same_alignment(rast2)
+
+            # determine output extent
+            extenttype = extenttype.lower()
+            
+##            # get coords for each pixel corner in rast2...
+##            w2,h2 = rast2.width, rast2.height
+##            corners2 = [(0,0),(0,w2-1),(w2-1,h2-1),(0,h2-1)]
+##            cornercoords2 = [rast2.raster_to_world_coord(px,py).as_GeoJSON()['coordinates'] for px,py in corners2]
+##            # get bounding box of rast2's pixel corner coords expressed in rast1 pixel positions
+##            cornerpixels2 = [self.world_to_raster_coord(x,y).as_GeoJSON()['coordinates'] for x,y in cornercoords2]
+##            pxs2,pys2 = zip(*cornerpixels2)
+##            pxmin2,pymin2,pxmax2,pymax2 = min(pxs2),min(pys2),max(pxs2),max(pys2)
+##            # get the combined pixel bounding box for these two bounding boxes (rast1 and rast2)
+##            w1,h1 = self.width, self.height
+##            pxmin1,pymin1,pxmax1,pymax1 = 0,0,w1-1,h1-1
+##            pxmin = min(pxmin1,pxmin2)
+##            pymin = min(pymin1,pymin2)
+##            pxmax = max(pxmax1,pxmax2)
+##            pymax = max(pymax1,pymax2)
+##            # determine width and height based on the extent of this pixel bounding box
+##            width = pxmax - pxmin
+##            height = pymax - pymin
+##            print pxmin1,pymin1,pxmax1,pymax1
+##            print pxmin2,pymin2,pxmax2,pymax2
+##            print pxmin,pymin,pxmax,pymax
+##            print width,height
+
+            if extenttype == 'first':
+                ipX,ipY = self.upperLeftX,self.upperLeftY
+                width,height = self.width,self.height
+                
+            elif extenttype == 'second':
+                ipX,ipY = rast2.upperLeftX,rast2.upperLeftY
+                width,height = rast2.width,rast2.height
+                
+            elif extenttype == 'intersection':
+                # get intersection of coord bboxes
+                box1 = self.box2d()
+                box2 = rast2.box2d()
+                box = box1.intersection(box2)
+                # return early if empty result, ie no intersection
+                if box.type() == 'GeometryCollection':
+                    print box.as_GeoJSON()
+                    raise NotImplemented
+                # calculate rast1 pixel positions for the intersected bbox
+                (xmin,ymin),(xmax,ymax) = box.as_GeoJSON()['coordinates']
+                corners = [(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin)]
+                pixelcorners = [self.world_to_raster_coord(x,y) for x,y in corners]
+                pxs,pys = zip(*pixelcorners)
+                pxmin,pymin,pxmax,pymax = min(pxs),min(pys),max(pxs),max(pys)
+                # calculate new georef from these pixel positions
+                ipX,ipY = xmin,ymin # TODO: what about y flipping?
+                width = pxmax-pxmin
+                height = pymax-pymin
+                
+            elif extenttype == 'union':
+                box1 = self.box2d()
+                box2 = rast2.box2d()
+                box = box1.union(box2)
+                # calculate rast1 pixel positions for the intersected bbox
+                xmin,ymin,xmax,ymax = box.bbox()
+                corners = [(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin)]
+                pixelcorners = [self.world_to_raster_coord(x,y).as_GeoJSON()['coordinates'] for x,y in corners]
+                pxs,pys = zip(*pixelcorners)
+                pxmin,pymin,pxmax,pymax = min(pxs),min(pys),max(pxs),max(pys)
+                # calculate new georef from these pixel positions
+                ipX,ipY = xmin,ymin # TODO: what about y flipping?
+                width = pxmax-pxmin
+                height = pymax-pymin
+                #print ipX,ipY,width,height
+
+            width,height = int(width),int(height)
+            
+            # edit and write raster header from scratch
+            header = self._header.copy()
+            endianFmt = header['endian']
+            header['endian'] = 1 if header['endian'] == '<' else 0
+            header['numbands'] = 1
+            header['width'] = width
+            header['height'] = height
+            header['ipX'] = ipX
+            header['ipY'] = ipY
+            #header['nodataval'] = None # output will not have nodataval, how to disable? 
+            headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
+            wkb += pack('<b', header['endian'])
+            wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
+            
+            # get and update band headers
+            bandhead = self._band_header(nband1)
+            bandhead['isOffline'] = False
+            dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
+                      'u2', 'i4', 'u4', 'f4', 'f8']
+            if pixeltype:
+                bandhead['pixtype'] = dtypes.index(pixeltype)
+            else:
+                # keep same as rast1
+                pixeltype = dtypes[bandhead['pixtype']]
+            
+            # write band headers
+            wkb += self._write_band_header(bandhead)
+
+            # reframe array 1
+            arr1 = self.data(nband1)
+            arr1 = arr1.astype(np.dtype(pixeltype))
+            offx1,offy1 = self.world_to_raster_coord(ipX, ipY).as_GeoJSON()['coordinates']
+            im1 = Image.fromarray(arr1).crop((offx1,offy1,offx1+width,offy1+height))
+            arr1 = np.array(im1)
+
+            # reframe array 2
+            arr2 = rast2.data(nband2)
+            arr2 = arr2.astype(np.dtype(pixeltype))
+            offx2,offy2 = rast2.world_to_raster_coord(ipX, ipY).as_GeoJSON()['coordinates']
+            im2 = Image.fromarray(arr2).crop((offx2,offy2,offx2+width,offy2+height))
+            arr2 = np.array(im2)
+
+            # set environment
+            locenv = {'rast1': arr1, 'rast2': arr2, 'np': np}
+
+            # parse expression
+            expression = expression.lower()
+
+            def sql2py(sql):
+                # TODO: support multiple and/or statements
+                # ... 
+
+                # convert rast references
+                sql = sql.replace('[rast1]', 'rast1').replace('[rast2]', 'rast2')
+
+                # equal condition
+                # TODO: Need fix if = without spaces
+                sql = sql.replace(' = ', ' == ')
+
+                # max min
+                sql = sql.replace('max(', 'np.maximum(')
+                sql = sql.replace('min(', 'np.minimum(')
+                
+                # between clause, ie "col BETWEEN v1 AND v2"
+                if 'between' in sql:
+                    col,bw = sql.split(' between ')
+                    vmin,vmax = bw.split(' and ')
+                    sql = '({vmin} <= {col}) & ({col} <= {vmax})'.format(vmin=vmin, col=col, vmax=vmax)
+                    
+                return sql
+
+            # calculate
+            if expression.startswith('case'):
+                # conditional expression
+                # ie: case when then ... when then ... else
+                expression = expression.replace('case when ', '')
+                whenpart,elsepart = expression.split(' else ')
+                
+                whens = whenpart.split(' when ')
+                when_cumul = np.zeros((height,width), dtype=bool)
+                arr_result = np.zeros((height,width), dtype=pixeltype)
+                for when in whens:
+                    when,then = when.split(' then ')
+
+                    # perform the math
+                    pyexpr = sql2py(when)
+                    #print 'when', pyexpr
+                    when_result = eval(pyexpr, {}, locenv)
+                    if np.any(when_result):
+                        when_result = when_result & (when_result ^ when_cumul) # exclude previous when-pixels
+                        when_cumul = when_cumul | when_result # update cumulative when-pixels
+
+                        pyexpr = sql2py(then)
+                        #print 'then', pyexpr
+                        then_result = eval(pyexpr, {}, locenv)
+
+                        # set values in results
+                        arr_result[when_result] = then_result
+
+                # final else clause
+                remain = ~when_cumul
+                if np.any(remain):
+                    elsepart = elsepart.replace(' end', '')
+                    pyexpr = sql2py(elsepart)
+                    #print 'else', pyexpr
+                    else_result = eval(pyexpr, {}, locenv)
+
+                    # set values in results
+                    arr_result[remain] = else_result
+
+            else:
+                # simple expression
+                pyexpr = sql2py(expression)
+                arr_result = eval(pyexpr, {}, locenv)
+                
+            # byteswap
+            #if endianFmt != arr_result.dtype.byteorder:
+            #    # TODO: HANDLE NATIVE BYTEORDER, IE '='
+            #    arr_result = arr_result.byteswap()
+
+            # write arr result
+            databytes = arr_result.tostring()
+            wkb += databytes
+
 
         wkb_buf = buffer(wkb)
         rast = Raster(wkb_buf)
@@ -813,6 +1029,7 @@ class Raster(object):
                 return False
 
         # test that corner coordinates match up
+        # TODO: probably only need to do it for one corner, eg (0,0)
         w,h = self.width, self.height
         corners = [(0,0),(0,w-1),(w-1,h-1),(0,h-1)]
         for x_pixelA,y_pixelA in corners:

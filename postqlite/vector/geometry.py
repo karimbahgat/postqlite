@@ -291,6 +291,8 @@ class Geometry(object):
                 num = unpack(byteorder+'i', stream.read(4))[0]
                 xmins,ymins,xmaxs,ymaxs = zip(*(polybox(multi(stream)) for _ in range(num)))
                 xmin,ymin,xmax,ymax = min(xmins),min(ymins),max(xmaxs),max(ymaxs)
+            else:
+                raise NotImplementedError('Geometry bbox calculation of type {}'.format(typ))
 
             return xmin,ymin,xmax,ymax
 
