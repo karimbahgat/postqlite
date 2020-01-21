@@ -72,14 +72,38 @@ def register_funcs(conn):
     conn.create_function('st_MapAlgebra', -1, lambda *args: Raster(args[0]).mapalgebra(*args[1:]).dump_wkb() if args[0] else None)
 
     # relations
+    conn.create_function('st_SameAlignment', 2, lambda wkb,otherwkb: Raster(wkb).same_alignment(Raster(otherwkb)) if wkb and otherwkb else None)
     #conn.create_function('st_Intersects', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
     #conn.create_function('st_Disjoint', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
 
 def register_aggs(conn):
-    pass
+    conn.create_aggregate('st_SameAlignment', 1, ST_SameAlignment)
 
 
 # classes
+
+class ST_SameAlignment(object):
+    def __init__(self):
+        self.ref = None
+        self.failed = False
+
+    def step(self, wkb):
+        if wkb is None:
+            return
+        
+        rast = Raster(wkb)
+        if self.ref:
+            # compare with the reference raster (first one)
+            aligned = rast.same_alignment(self.ref)
+            if not aligned:
+                self.failed = True
+        else:
+            # first one
+            self.ref = rast
+
+    def finalize(self):
+        success = not self.failed
+        return success
 
 ##class Band(object):
 ##    def __init__(self, rast, data=None, dtype=None, width=None, height=None, initialvalue=0, nodataval=None):
@@ -666,6 +690,8 @@ class Raster(object):
         endianFmt = header['endian']
         header['endian'] = 1 if header['endian'] == '<' else 0
         header['numbands'] = 1
+        if nodataval != None:
+            header['nodataval'] = nodataval
         headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
         wkb += pack('<b', header['endian'])
         wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
@@ -707,9 +733,10 @@ class Raster(object):
                     
                 return sql
 
-            # conditional expression
-            # ie: case when then ... when then ... else
+            # calculate
             if expression.startswith('case'):
+                # conditional expression
+                # ie: case when then ... when then ... else
                 expression = expression.replace('case when ', '')
                 whenpart,elsepart = expression.split(' else ')
                 
@@ -746,7 +773,7 @@ class Raster(object):
                     arr_result[remain] = else_result
 
             else: 
-                # simple math
+                # simple expression
                 pyexpr = sql2py(expression)
                 arr_result = eval(pyexpr, {}, locenv)
                 
@@ -765,6 +792,41 @@ class Raster(object):
         wkb_buf = buffer(wkb)
         rast = Raster(wkb_buf)
         return rast
+
+
+    ############
+    # relations
+
+    def same_alignment(self, rastB):
+        if not self._header:
+            self._load_header()
+        if not rastB._header:
+            rastB._load_header()
+
+        # Goal: both rasters must have the same scale, skew, srid and
+        # at least one of any of the four corners of any pixel of one raster
+        # falls on any corner of the grid of the other raster
+
+        # check that have the same params
+        for param in 'scaleX scaleY skewX skewY srid'.split(' '):
+            if self._header[param] != rastB._header[param]:
+                return False
+
+        # test that corner coordinates match up
+        w,h = self.width, self.height
+        corners = [(0,0),(0,w-1),(w-1,h-1),(0,h-1)]
+        for x_pixelA,y_pixelA in corners:
+            x, y = self.raster_to_world_coord(x_pixelA,y_pixelA).as_GeoJSON()['coordinates']
+            x_pixelB,y_pixelB = rastB.world_to_raster_coord(x, y).as_GeoJSON()['coordinates']
+            if x_pixelB.is_integer() and y_pixelB.is_integer():
+                # one of the corner coordinates of rastA
+                # falls exactly on a corner pixel in rastB (integers)
+                # meaning they have same alignment
+                return True
+
+        # coorner coordinates do not match up
+        return False
+        
 
 ##    def add_band(self, *args, **kwargs):
 ##        if args and isinstance(args[0], Band):

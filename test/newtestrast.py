@@ -89,6 +89,23 @@ for row in cur.execute('select st_asText(st_worldToRasterCoord(rast, 0, 0)) from
 
 
 ####################
+# relations
+
+# same alignment
+print 'same alignment'
+for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as t2 limit 1 offset 1"):
+    print rast1.bbox(), rast2.bbox()
+    print rast1.same_alignment(rast2)
+    break
+
+# same alignment
+print 'same alignment, aggregate'
+for row in cur.execute("select st_sameAlignment(rast) from test"):
+    print row
+    break
+
+
+####################
 # extracting
 
 # band selection
@@ -149,7 +166,7 @@ for row in cur.execute('''select rast from test'''):
     result = rast.mapalgebra(1, 'f4', '[rast] ** 2')
     print result.summarystats()
     
-    #print 'dummy coding'
+    #print 'dummy coding?'
     #result = rast.mapalgebra(1, 'f4', '[rast] = 255')
     #print result.summarystats()
     
