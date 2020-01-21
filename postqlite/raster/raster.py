@@ -2,10 +2,11 @@
 import numpy as np
 import math
 import json
-from struct import unpack_from
+from struct import unpack_from, pack, calcsize
 
 from affine import Affine
-from shapely.geometry import Point
+from shapely.geometry import Point, MultiPoint, Polygon
+from PIL import Image
 
 from .load import file_reader
 from ..vector.geometry import Geometry
@@ -17,7 +18,9 @@ def register_funcs(conn):
     # see: https://postgis.net/docs/reference.html
 
     # constructors
-    conn.create_function('st_RastFromWKB', 1, lambda wkb: Raster(wkb).dump_wkb() ) # whats the point of this? 
+    #conn.create_function('ST_MakeEmptyRaster', 1, lambda wkb: Raster(wkb).dump_wkb() ) 
+    conn.create_function('st_RastFromWKB', 1, lambda wkb: Raster(wkb).dump_wkb() ) # whats the point of this?
+    conn.create_function('st_Band', 2, lambda wkb,i: Raster(wkb).band(i).dump_wkb() ) 
 
     # metadata
     conn.create_function('st_Width', 1, lambda wkb: Raster(wkb).width if wkb else None)
@@ -32,20 +35,32 @@ def register_funcs(conn):
     conn.create_function('st_GeoReference', 1, lambda wkb: json.dumps(Raster(wkb).georeference()) if wkb else None)
     conn.create_function('st_MetaData', 1, lambda wkb: json.dumps(Raster(wkb).metadata()) if wkb else None)
 
+    conn.create_function('st_Box2D', 1, lambda wkb: Raster(wkb).box2d().dump_wkb() if wkb else None)
+
+    #conn.create_function('st_BandMetaData', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
+    conn.create_function('st_BandNoDataValue', 2, lambda wkb,band: Raster(wkb).no_data_value(band) if wkb else None)
+    #conn.create_function('st_BandIsNoData', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
+    conn.create_function('st_BandPixelType', 2, lambda wkb,band: Raster(wkb).pixel_type(band) if wkb else None)
+    #conn.create_function('st_HasNoBand', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
+
     # representations
-    #conn.create_function('st_Envelope', 1, lambda wkb: Geometry(*Raster(wkb).bbox).dump_wkb() if wkb else None)
+    conn.create_function('st_Envelope', 1, lambda wkb: Raster(wkb).envelope().dump_wkb() if wkb else None)
     #PNG+JPEG? requires img type column
 
     # querying
     conn.create_function('st_WorldToRasterCoord', 3, lambda wkb,x,y: Raster(wkb).world_to_raster_coord(x, y).dump_wkb() if wkb else None)
     conn.create_function('st_RasterToWorldCoord', 3, lambda wkb,x,y: Raster(wkb).raster_to_world_coord(x, y).dump_wkb() if wkb else None)
     #conn.create_function('st_Value', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    #conn.create_function('st_SetValue', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    #conn.create_function('st_PixelAsPolygon', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    #conn.create_function('st_PixelAsPoint', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    #conn.create_function('st_PixelAsCentroid', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
 
     # stats
-    #conn.create_function('st_SummaryStats', 2, lambda wkb,band: Raster(wkb).summarystats(band) if wkb else None)
+    conn.create_function('st_SummaryStats', 2, lambda wkb,band: json.dumps(Raster(wkb).summarystats(band)) if wkb else None)
 
     # changing
-    #conn.create_function('st_Resize', 3, lambda wkb,width,height: Raster(wkb).resize(width, height).dump_wkb() if wkb else None)
+    conn.create_function('st_Resize', 3, lambda wkb,width,height: Raster(wkb).resize(width, height).dump_wkb() if wkb else None)
     #conn.create_function('st_Resample', 2, lambda wkb,refwkb: Raster(wkb).resample(Raster(refwkb)).dump_wkb() if wkb else None)
     #conn.create_function('st_Transform', 2, lambda wkb,crs: Raster(wkb).transform(crs).dump_wkb() if wkb else None)
 
@@ -160,6 +175,7 @@ class Raster(object):
          srid, width, height) = unpack_from(endian + 'xHHddddddIHH', self._wkb)
 
         self._header = dict()
+        self._header['endian'] = endian
         self._header['version'] = version
         self._header['scaleX'] = scaleX
         self._header['scaleY'] = scaleY
@@ -257,6 +273,25 @@ class Raster(object):
                 'numbands': self._header['numbands']}
         return meta
 
+    def bbox(self):
+        # get coords of all four corners
+        w,h = self.width, self.height
+        corners = [(0,0),(0,w-1),(w-1,h-1),(0,h-1)]
+        coords = [self.raster_to_world_coord(px,py).as_GeoJSON()['coordinates']
+                  for px,py in corners]
+        xs,ys = zip(*coords)
+        return min(xs),min(ys),max(xs),max(ys)
+
+    def box2d(self):
+        xmin,ymin,xmax,ymax = self.bbox()
+        pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
+        return pointbox
+
+    def envelope(self):
+        xmin,ymin,xmax,ymax = self.bbox()
+        polygon = Geometry(Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)]).wkb)
+        return polygon
+
     # querying
 
     def raster_to_world_coord(self, px, py):
@@ -281,30 +316,309 @@ class Raster(object):
         geom._shp = shp
         return geom
 
-##    def summarystats(self, band=1):
-##        # should return: count | sum  |    mean    |  stddev   | min | max
-##        pass
+    # bands
 
-##    @property
-##    def bbox(self):
-##        #xoff,xscale,xskew,yoff,yscale,yskew = self.affine
-##        #x1,y1 = xoff,yoff
-##        #x2,y2 = x1 + self.width * xscale, y1 + self.height * yscale
-##        px1,py1,px2,py2 = (0, 0, self.width+1, self.height+1)
-##        x1,y1 = self.cell_to_geo(px1,py1)
-##        x2,y2 = self.cell_to_geo(px2,py2)
-##        return (x1,y1,x2,y2)
-##
-##    def band(self, i):
-##        return self.bands[i]
-##
+    def _band_start(self, i):
+        if not self._header:
+            self._load_header()
+
+        skip = 1+60 #calcsize('bHHddddddIHH') # raster header
+
+        _i = 1
+        while _i < i:
+        
+            bandsize = self._band_size(skip)
+            skip += bandsize
+
+            _i += 1
+
+        return skip
+
+    def _band_header(self, i):
+        if not self._header:
+            self._load_header()
+
+        header = dict()
+        start = self._band_start(i)
+
+        # Requires reading a single byte, and splitting the bits into the
+        # header attributes
+        endian = self._header['endian']
+        (bits,) = unpack_from(endian + 'b', self._wkb, offset=start)
+
+        header['isOffline'] = bool(bits & 128)  # first bit
+        header['hasNodataValue'] = bool(bits & 64)  # second bit
+        header['isNodataValue'] = bool(bits & 32)  # third bit
+
+        pixtype = bits & int('00001111', 2) # bits 5-8
+        header['pixtype'] = pixtype
+
+        # Based on the pixel type, determine the data type byte size
+        fmts = ['?', 'B', 'B', 'b', 'B', 'h',
+                'H', 'i', 'I', 'f', 'd']
+        fmt = fmts[pixtype]
+
+        # Read the nodata value
+        (nodata,) = unpack_from(endian + fmt, self._wkb, offset=start+1)
+        header['nodata'] = nodata
+
+        return header
+
+    def _write_band_header(self, header):
+        wkb = b''
+        bits = 0
+
+        endian = self._header['endian']
+
+        if header['isOffline']:
+            bits = (bits & int('01111111', 2)) | int('10000000', 2) # first bit
+        if header['hasNodataValue']:
+            bits = (bits & int('10111111', 2)) | int('01000000', 2) # second bit
+        if header['isNodataValue']:
+            bits = (bits & int('11011111', 2)) | int('00100000', 2) # third bit
+
+        # Based on the pixel type, determine the struct format, byte size and
+        # numpy dtype
+        pixtype = header['pixtype']
+        
+        fmts = ['?', 'B', 'B', 'b', 'B', 'h',
+                'H', 'i', 'I', 'f', 'd']
+        dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
+                  'u2', 'i4', 'u4', 'f4', 'f8']
+        #dtypes = ['bool', 'uint8', 'uint8', 'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'float32', 'float64']
+        sizes = [1, 1, 1, 1, 1, 2, 2, 4, 4, 4, 8]
+
+        dtype = dtypes[pixtype]
+        size = sizes[pixtype]
+        fmt = fmts[pixtype]
+        bits = (bits & int('11110000', 2)) | (pixtype & int('00001111', 2))
+
+        # Write the bits to a byte
+        wkb += pack(endian + 'b', bits)
+
+        # Write the nodata value
+        nodata = header['nodata']
+        wkb += pack(endian + fmt, nodata)
+
+        return wkb
+
+    def _band_size(self, start):
+        #print 'band start',start
+        skip = 0
+        
+        # Requires reading a single byte, and splitting the bits into the
+        # header attributes
+        endian = self._header['endian']
+        (bits,) = unpack_from(endian + 'b', self._wkb, offset=start)
+        skip += 1
+
+        # Based on the pixel type, determine the data type byte size
+        pixtype = bits & int('00001111', 2) # bits 5-8
+        sizes = [1, 1, 1, 1, 1, 2, 2, 4, 4, 4, 8]
+        size = sizes[pixtype]
+
+        # Skip nodataval
+        skip += size
+
+        # Skip data
+        isOffline = bool(bits & 128)  # first bit
+        if isOffline:
+            raise Exception
+        
+        else:
+            arraysize = self._header['width'] * self._header['height'] * size
+            skip += arraysize
+
+        #print 'band size',skip
+        return skip
+
+    def band(self, i):
+        '''Returns a new raster containing only the specified bands'''
+        if not self._header:
+            self._load_header()
+            
+        if isinstance(i, int):
+            bands = [i]
+        else:
+            bands = [int(_i.strip()) for _i in i.split(',')] # comma separated list of band nrs
+
+        # init
+        wkb = b''
+
+        # copy raster header
+        #rastheadersize = 1+60 #calcsize('bHHddddddIHH')
+        #wkb += self._wkb[:rastheadersize]
+
+        # OR edit and write raster header from scratch
+        header = self._header.copy()
+        endianFmt = header['endian']
+        header['endian'] = 1 if header['endian'] == '<' else 0
+        header['numbands'] = len(bands)
+        headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
+        wkb += pack('<b', header['endian'])
+        wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
+
+        # copy each specified band
+        for bandnum in bands:
+            #print 'band',repr(bandnum)
+            start = self._band_start(bandnum)
+            bandsize = self._band_size(start)
+            wkb += self._wkb[start:start+bandsize]
+
+        wkb_buf = buffer(wkb)
+        rast = Raster(wkb_buf)
+        return rast
+
+    def no_data_value(self, band=1):
+        if not self._header:
+            self._load_header()
+
+        start = self._band_start(band)
+
+        endian = self._header['endian']
+        (bits,) = unpack_from(endian + 'b', self._wkb, offset=start)
+
+        # Based on the pixel type, determine the data type
+        pixtype = bits & int('00001111', 2) # bits 5-8
+
+        fmts = ['?', 'B', 'B', 'b', 'B', 'h',
+                'H', 'i', 'I', 'f', 'd']
+        fmt = fmts[pixtype]
+
+        # Read the nodata value
+        (nodata,) = unpack_from(endian + fmt, self._wkb, offset=start+1)
+        return nodata
+
+    def pixel_type(self, band=1):
+        '''Returns the numpy data type'''
+        if not self._header:
+            self._load_header()
+
+        start = self._band_start(band)
+
+        endian = self._header['endian']
+        (bits,) = unpack_from(endian + 'b', self._wkb, offset=start)
+
+        # Based on the pixel type, determine the data type
+        pixtype = bits & int('00001111', 2) # bits 5-8
+
+        dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
+                  'u2', 'i4', 'u4', 'f4', 'f8']
+        dtype = dtypes[pixtype]
+
+        return dtype
+
+    def data(self, band=1):
+        '''Returns band data as numpy array'''
+        if not self._header:
+            self._load_header()
+
+        start = self._band_start(band)
+        skip = 0
+
+        endian = self._header['endian']
+        (bits,) = unpack_from(endian + 'b', self._wkb, offset=start)
+        skip += 1
+
+        # Based on the pixel type, determine the data type
+        pixtype = bits & int('00001111', 2) # bits 5-8
+
+        dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
+                  'u2', 'i4', 'u4', 'f4', 'f8']
+        dtype = dtypes[pixtype]
+
+        # Skip nodataval
+        sizes = [1, 1, 1, 1, 1, 2, 2, 4, 4, 4, 8]
+        size = sizes[pixtype]
+        skip += size
+
+        # Read data
+        isOffline = bool(bits & 128)  # first bit
+        if isOffline:
+            raise Exception
+        
+        else:
+            width,height = self._header['width'], self._header['height']
+            data = np.ndarray((height, width),
+                              buffer=self._wkb, offset=start+skip,
+                              dtype=np.dtype(dtype)
+                              )
+
+        return data
+
+    def summarystats(self, band=1):
+        # should return: count | sum  |    mean    |  stddev   | min | max
+        arr = self.data(band)
+        stats = {'count': arr.shape[0]*arr.shape[1],
+                 'sum': float(arr.sum()),
+                 'mean': float(arr.mean()),
+                 'stddev': float(np.std(arr)),
+                 'min': float(arr.min()),
+                 'max': float(arr.max()),
+                 }
+        return stats
+
+
+    # changing
+
+    def resize(self, width, height, algorithm='nearest'):
+        if not self._header:
+            self._load_header()
+
+        # MAYBE just outsource entire writing here?
+        # ...
+
+        # init
+        wkb = b''
+
+        # copy raster header
+        #rastheadersize = 1+60 #calcsize('bHHddddddIHH')
+        #wkb += self._wkb[:rastheadersize]
+
+        # OR edit and write raster header from scratch
+        header = self._header.copy()
+        endianFmt = header['endian']
+        header['endian'] = 1 if header['endian'] == '<' else 0
+        header['width'] = width
+        header['height'] = height
+        headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
+        wkb += pack('<b', header['endian'])
+        wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
+
+        # write each band
+        for bandnum in range(1, self._header['numbands']+1):
+            #print 'band',repr(bandnum)
+            # get and update band headers
+            bandhead = self._band_header(bandnum)
+            bandhead['isOffline'] = False
+            
+            # write band headers
+            wkb += self._write_band_header(bandhead)
+
+            # resize the data
+            arr = self.data(bandnum)
+            im = Image.fromarray(arr)
+            method = {'nearest': Image.NEAREST}[algorithm]
+            im2 = im.resize((width,height), method)
+            arr2 = np.array(im2)
+                
+            # write arr2
+            if endianFmt != arr2.dtype.byteorder:
+                arr2 = arr2.byteswap()
+            databytes = arr2.tostring()
+            wkb += databytes
+
+        wkb_buf = buffer(wkb)
+        rast = Raster(wkb_buf)
+        return rast
+
 ##    def add_band(self, *args, **kwargs):
 ##        if args and isinstance(args[0], Band):
 ##            band = args[0]
 ##        else:
 ##            band = Band(self, *args, **kwargs)
 ##        self.bands.append(band)
-##
+
 ##    def tiled(self, tilesize=None, tiles=None):
 ##        # create iterable tiler class, to allow also checking length
 ##        

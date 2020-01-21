@@ -59,6 +59,18 @@ for row in cur.execute('select st_metadata(rast) from test'):
     print row
     break
 
+# box2d
+print 'box2d'
+for row in cur.execute('select st_asText(st_box2d(rast)) from test'):
+    print row
+    break
+
+# envelope
+print 'envelope'
+for row in cur.execute('select st_asText(st_envelope(rast)) from test'):
+    print row
+    break
+
 
 ####################
 # querying
@@ -74,6 +86,63 @@ print 'world to raster'
 for row in cur.execute('select st_asText(st_worldToRasterCoord(rast, 0, 0)) from test'):
     print row
     break
+
+
+####################
+# extracting
+
+# band selection
+print 'band selection'
+for row in cur.execute("select st_numBands(rast), st_numBands(st_Band(rast, 1)), st_numBands(st_Band(rast, '1,2')) from test"):
+    print row
+    break
+
+# band nodata
+print 'band nodata'
+for row in cur.execute("select st_bandNoDataValue(rast,1) from test"):
+    print row
+    break
+
+# band pixel type
+print 'band pixel type'
+for row in cur.execute("select st_bandPixelType(rast,1) from test"):
+    print row
+    break
+
+# band numpy array
+print 'band numpy array'
+for row in cur.execute("select rast from test"):
+    print row
+    arr = row[0].data(1)
+    print arr
+    #from PIL import Image
+    #Image.fromarray(arr).show()
+    break
+
+# band summary stats
+print 'band summary stats'
+for row in cur.execute("select st_summarystats(rast,1) from test"):
+    print row
+    break
+
+
+#############
+# changing
+
+# resize
+print 'resize'
+for row in cur.execute("select st_width(st_resize(rast,200,100)),st_height(st_resize(rast,200,100)) from test"):
+    print row
+    break
+
+
+
+
+
+
+
+
+
 
 
 
