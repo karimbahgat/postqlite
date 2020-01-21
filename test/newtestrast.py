@@ -131,10 +131,36 @@ for row in cur.execute("select st_summarystats(rast,1) from test"):
 
 # resize
 print 'resize'
-for row in cur.execute("select st_width(st_resize(rast,200,100)),st_height(st_resize(rast,200,100)) from test"):
+for row in cur.execute('''select st_resize(rast,200,100) as "[rast]", st_width(st_resize(rast,200,100)),st_height(st_resize(rast,200,100)) from test'''):
     print row
+    #arr = row[0].data(1)
+    #print arr
+    #from PIL import Image
+    #Image.fromarray(arr).show()
     break
 
+# map algebra
+print 'map algebra, single'
+for row in cur.execute('''select rast from test'''):
+    print row
+    rast = row[0]
+    print rast.summarystats()
+    print 'simple math'
+    result = rast.mapalgebra(1, 'f4', '[rast] ** 2')
+    print result.summarystats()
+    
+    #print 'dummy coding'
+    #result = rast.mapalgebra(1, 'f4', '[rast] = 255')
+    #print result.summarystats()
+    
+    print 'conditional'
+    result = rast.mapalgebra(1, 'f4', 'case when [rast] = 0 then 0 when [rast] <= 100 then 1 when [rast] <= 200 then 2 else 99 end')
+    print result.summarystats()
+
+    print 'between'
+    result = rast.mapalgebra(1, 'f4', 'case when [rast] = 0 then 0 when [rast] between 1 and 100 then 1 when [rast] between 101 and 200 then 2 else 99 end')
+    print result.summarystats()
+    break
 
 
 

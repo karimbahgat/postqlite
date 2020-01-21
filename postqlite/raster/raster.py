@@ -60,7 +60,8 @@ def register_funcs(conn):
     conn.create_function('st_SummaryStats', 2, lambda wkb,band: json.dumps(Raster(wkb).summarystats(band)) if wkb else None)
 
     # changing
-    conn.create_function('st_Resize', 3, lambda wkb,width,height: Raster(wkb).resize(width, height).dump_wkb() if wkb else None)
+    conn.create_function('st_Resize', -1, lambda *args: Raster(args[0]).resize(*args[1:]).dump_wkb() if args[0] else None)
+    #conn.create_function('st_Rescale', 3, lambda wkb,width,height: Raster(wkb).rescale(width, height).dump_wkb() if wkb else None)
     #conn.create_function('st_Resample', 2, lambda wkb,refwkb: Raster(wkb).resample(Raster(refwkb)).dump_wkb() if wkb else None)
     #conn.create_function('st_Transform', 2, lambda wkb,crs: Raster(wkb).transform(crs).dump_wkb() if wkb else None)
 
@@ -68,7 +69,7 @@ def register_funcs(conn):
     #conn.create_function('st_Clip', 2, lambda wkb,geomwkb: Raster(wkb).clip(Geometry(geomwkb)).dump_wkb() if wkb and geomwkb else None)
     #conn.create_function('st_Intersection', 2, lambda wkb,otherwkb: Raster(wkb).intersection(Raster(otherwkb)).dump_wkb() if wkb and otherwkb else None)
     #conn.create_function('st_Union', 2, lambda wkb,otherwkb: Raster(wkb).union(Raster(otherwkb)).dump_wkb() if wkb and otherwkb else None)
-    #conn.create_function('st_MapAlgebraExpr', 3, lambda wkb,otherwkb,opts: Raster(wkb).mapAlgebraExpr(Raster(otherwkb), **opts).dump_wkb() if wkb and otherwkb else None)
+    conn.create_function('st_MapAlgebra', -1, lambda *args: Raster(args[0]).mapalgebra(*args[1:]).dump_wkb() if args[0] else None)
 
     # relations
     #conn.create_function('st_Intersects', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
@@ -561,9 +562,17 @@ class Raster(object):
 
     # changing
 
-    def resize(self, width, height, algorithm='nearest'):
+    def resize(self, *args):
         if not self._header:
             self._load_header()
+
+        # parse args
+        assert len(args) >= 2
+        if isinstance(args[0], int) and isinstance(args[1], int):
+            width, height = args[:2]
+            algorithm = args[2] if len(args) >= 3 else 'nearestneighbor'
+        else:
+            raise Exception('Invalid function args: {}'.format(args))
 
         # MAYBE just outsource entire writing here?
         # ...
@@ -598,15 +607,160 @@ class Raster(object):
             # resize the data
             arr = self.data(bandnum)
             im = Image.fromarray(arr)
-            method = {'nearest': Image.NEAREST}[algorithm]
-            im2 = im.resize((width,height), method)
-            arr2 = np.array(im2)
+            method = {'nearestneighbor': Image.NEAREST,
+                      'nearestneighbour': Image.NEAREST,
+                      'bilinear': Image.BILINEAR,
+                      'cubicspline': Image.BICUBIC,
+                      'lanczos': Image.LANCZOS}[algorithm.lower()]
+            im_result = im.resize((width,height), method)
+            arr_result = np.array(im_result)
                 
-            # write arr2
-            if endianFmt != arr2.dtype.byteorder:
-                arr2 = arr2.byteswap()
-            databytes = arr2.tostring()
+            # byteswap
+            #if endianFmt != arr_result.dtype.byteorder:
+            #    # TODO: HANDLE NATIVE BYTEORDER, IE '='
+            #    arr_result = arr_result.byteswap()
+
+            # write arr result
+            databytes = arr_result.tostring()
             wkb += databytes
+
+        wkb_buf = buffer(wkb)
+        rast = Raster(wkb_buf)
+        return rast
+
+    def mapalgebra(self, *args):
+        if not self._header:
+            self._load_header()
+
+        # parse args
+        assert len(args) >= 2
+        # single mode
+        if isinstance(args[0], int) and isinstance(args[1], basestring):
+            # nband, pixeltype, expression, nodataval=NULL
+            nband, pixeltype, expression = args[:3]
+            nodataval = args[3] if len(args) >= 4 else None
+            mode = 'single'
+        elif isinstance(args[0], basestring) and isinstance(args[1], basestring):
+            # nband, pixeltype, expression, nodataval=NULL
+            pixeltype, expression = args[:2]
+            nband = 1
+            nodataval = args[2] if len(args) >= 3 else None
+            mode = 'single'
+        # multi mode
+        # ...
+        else:
+            raise Exception('Invalid function args: {}'.format(args))
+
+        # MAYBE just outsource entire writing here?
+        # ...
+
+        # init
+        wkb = b''
+
+        # copy raster header
+        #rastheadersize = 1+60 #calcsize('bHHddddddIHH')
+        #wkb += self._wkb[:rastheadersize]
+
+        # OR edit and write raster header from scratch
+        header = self._header.copy()
+        endianFmt = header['endian']
+        header['endian'] = 1 if header['endian'] == '<' else 0
+        header['numbands'] = 1
+        headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
+        wkb += pack('<b', header['endian'])
+        wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
+
+        if mode == 'single':
+            # get and update band headers
+            bandhead = self._band_header(nband)
+            bandhead['isOffline'] = False
+            dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
+                      'u2', 'i4', 'u4', 'f4', 'f8']
+            bandhead['pixtype'] = dtypes.index(pixeltype)
+            
+            # write band headers
+            wkb += self._write_band_header(bandhead)
+
+            # set environment
+            arr = self.data(nband)
+            arr = arr.astype(np.dtype(pixeltype))
+            locenv = {'rast': arr}
+
+            # parse expression
+            expression = expression.lower()
+
+            def sql2py(sql):
+                # TODO: support multiple and/or statements
+
+                # convert rast references
+                sql = sql.replace('[rast]', 'rast')
+
+                # equal condition
+                # TODO: Need fix if = without spaces
+                sql = sql.replace(' = ', ' == ')
+                
+                # between clause, ie "col BETWEEN v1 AND v2"
+                if 'between' in sql:
+                    col,bw = sql.split(' between ')
+                    vmin,vmax = bw.split(' and ')
+                    sql = '({vmin} <= {col}) & ({col} <= {vmax})'.format(vmin=vmin, col=col, vmax=vmax)
+                    
+                return sql
+
+            # conditional expression
+            # ie: case when then ... when then ... else
+            if expression.startswith('case'):
+                expression = expression.replace('case when ', '')
+                whenpart,elsepart = expression.split(' else ')
+                
+                whens = whenpart.split(' when ')
+                when_cumul = np.zeros(arr.shape, dtype=bool)
+                arr_result = np.array(arr)
+                for when in whens:
+                    when,then = when.split(' then ')
+
+                    # perform the math
+                    pyexpr = sql2py(when)
+                    #print 'when', pyexpr
+                    when_result = eval(pyexpr, {}, locenv)
+                    if np.any(when_result):
+                        when_result = when_result & (when_result ^ when_cumul) # exclude previous when-pixels
+                        when_cumul = when_cumul | when_result # update cumulative when-pixels
+
+                        pyexpr = sql2py(then)
+                        #print 'then', pyexpr
+                        then_result = eval(pyexpr, {}, locenv)
+
+                        # set values in results
+                        arr_result[when_result] = then_result
+
+                # final else clause
+                remain = ~when_cumul
+                if np.any(remain):
+                    elsepart = elsepart.replace(' end', '')
+                    pyexpr = sql2py(elsepart)
+                    #print 'else', pyexpr
+                    else_result = eval(pyexpr, {}, locenv)
+
+                    # set values in results
+                    arr_result[remain] = else_result
+
+            else: 
+                # simple math
+                pyexpr = sql2py(expression)
+                arr_result = eval(pyexpr, {}, locenv)
+                
+            # byteswap
+            #if endianFmt != arr_result.dtype.byteorder:
+            #    # TODO: HANDLE NATIVE BYTEORDER, IE '='
+            #    arr_result = arr_result.byteswap()
+
+            # write arr result
+            databytes = arr_result.tostring()
+            wkb += databytes
+
+        elif mode == 'multi':
+            raise NotImplemented
 
         wkb_buf = buffer(wkb)
         rast = Raster(wkb_buf)
