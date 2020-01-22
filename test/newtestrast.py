@@ -18,6 +18,8 @@ cur.execute('create table test (rast rast)')
 # populate with real image data
 print 'populate'
 d = postqlite.raster.data.Raster(r"C:\Users\kimok\OneDrive\Documents\GitHub\AutoMap\tests\testmaps\txu-oclc-6654394-nb-30-4th-ed.jpg")
+#d = postqlite.raster.data.Raster(r"C:\Users\kimok\Desktop\BIGDATA\NORAD data\deforestation\Hansen_GFC-2018-v1.6_gain_00N_040W.tif")
+print d
 for tile in d.tiled(tilesize=(1000,1000)):
     wkb = tile.wkb
     wkbtile = postqlite.raster.raster.Raster(wkb)
@@ -26,6 +28,15 @@ for tile in d.tiled(tilesize=(1000,1000)):
 # check full
 print 'full', cur.execute('select count(oid) from test').fetchone()
 
+
+#############
+# construction
+
+# create empty
+print 'create empty'
+for row in cur.execute('select st_metadata(st_MakeEmptyRaster(500,250,-180,90,0.5)) from test'):
+    print row
+    break
 
 
 #############
@@ -183,7 +194,7 @@ for row in cur.execute('''select rast from test'''):
 
 # map algebra, multi
 print 'map algebra, multi'
-for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as t2 limit 1 offset 1"):
+for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as t2 limit 3 offset 1"):
     print 1, rast1.summarystats()
     print 2, rast2.summarystats()
     
@@ -205,8 +216,6 @@ for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as 
     #print 'between'
     #result = rast.mapalgebra(rast2 'case when [rast1] = 0 then 0 when [rast1] between 1 and 100 then 1 when [rast1] between 101 and 200 then 2 else 99 end')
     #print result.summarystats()
-    
-    break
 
 # union aggregate
 print 'union aggregate'
@@ -217,17 +226,22 @@ print 'union aggregate'
 ##    break
 
 # debug
+import cProfile
+#p=cProfile.Profile()
+#p.enable()
 agg = postqlite.raster.raster.ST_Union()
 for (rast,) in cur.execute("select rast from test"):
     print rast
-    agg.step(rast.dump_wkb(), 'max')
+    agg.step(rast.dump_wkb(), 'last')
     #Image.fromarray(agg.result.data(1)).show()
 rast = postqlite.raster.raster.Raster(agg.finalize())
+#p.create_stats()
+#p.print_stats('tottime')
 
 # view
 print rast.metadata()
 print rast.summarystats()
-Image.fromarray(rast.data(1)).show()
+#Image.fromarray(rast.data(1)).show()
 
 
 

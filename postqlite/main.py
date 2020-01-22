@@ -7,6 +7,9 @@ from .vector import geometry
 from .raster import raster
 
 
+sqlite3.enable_callback_tracebacks(True)
+
+
 def connect(path, *args, **kwargs):
 
     kwargs['detect_types'] = sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES # overrides...

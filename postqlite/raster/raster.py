@@ -18,7 +18,7 @@ def register_funcs(conn):
     # see: https://postgis.net/docs/reference.html
 
     # constructors
-    #conn.create_function('ST_MakeEmptyRaster', 1, lambda wkb: Raster(wkb).dump_wkb() ) 
+    conn.create_function('ST_MakeEmptyRaster', -1, lambda *args: make_empty_raster(*args).dump_wkb() ) 
     conn.create_function('st_RastFromWKB', 1, lambda wkb: Raster(wkb).dump_wkb() ) # whats the point of this?
     conn.create_function('st_Band', 2, lambda wkb,i: Raster(wkb).band(i).dump_wkb() ) 
 
@@ -164,6 +164,44 @@ class ST_Union(object):
         wkb = self.result.dump_wkb()
         return wkb
     
+
+def make_empty_raster(*args):
+    # parse args
+    if len(args) == 1 and isinstance(args[0], Raster):
+        # raster rast
+        rast = args[0]
+        meta = rast.metadata()
+        width,height,upperleftx,upperlefty,scalex,scaley,skewx,skewy,srid = [meta[k]
+                                                                             for k in 'width,height,upperleftx,upperlefty,scalex,scaley,skewx,skewy,srid'.split(',')]
+    elif len(args) >= 8:
+        # integer width, integer height, float8 upperleftx, float8 upperlefty, float8 scalex, float8 scaley, float8 skewx, float8 skewy, integer srid=unknown
+        width,height,upperleftx,upperlefty,scalex,scaley,skewx,skewy = args[:8]
+        srid = args[8] if len(args) == 9 else 0
+        
+    elif len(args) >= 5:
+        # integer width, integer height, float8 upperleftx, float8 upperlefty, float8 pixelsize
+        width,height,upperleftx,upperlefty,scale = args[:5]
+        scalex = scaley = scale
+        skewx,skewy = 0,0
+        srid = 0
+
+    # create raster
+    wkb = b''
+
+    # write raster header from scratch
+    header = dict(zip('width,height,ipX,ipY,scaleX,scaleY,skewX,skewY,srid'.split(','),
+                      [width,height,upperleftx,upperlefty,scalex,scaley,skewx,skewy,srid]))
+    header['version'] = 0 # think this is correct version? 
+    header['numbands'] = 0
+    endianFmt = '>' # arbitrary
+    header['endian'] = 1 if endianFmt == '<' else 0
+    headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
+    wkb += pack('<b', header['endian'])
+    wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
+
+    rast = Raster(buffer(wkb))
+    return rast
+
 
 class Raster(object):
     def __init__(self, wkb):
@@ -908,100 +946,168 @@ class Raster(object):
             # write band headers
             wkb += self._write_band_header(bandhead)
 
+            # create raster for new extent
+            frame = make_empty_raster(width, height, ipX, ipY, self.scaleX, self.scaleY, self.skewX, self.skewY)
+            frame_result = np.zeros((height,width), dtype=pixeltype)
+            frame_result = Image.fromarray(frame_result)
+
             # reframe array 1
             arr1 = self.data(nband1)
             arr1 = arr1.astype(np.dtype(pixeltype))
-            offx1,offy1 = self.world_to_raster_coord(ipX, ipY).as_GeoJSON()['coordinates']
-            im1 = Image.fromarray(arr1).crop((offx1,offy1,offx1+width,offy1+height))
-            arr1 = np.array(im1)
+            ulX,ulY = self.raster_to_world_coord(0, 0).as_GeoJSON()['coordinates']
+            startX1,startY1 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            # im paste
+            #print 'arr1 pixel bounds',startX1,startY1, startX1+self.width, startY1+self.height
+            frame_result.paste(Image.fromarray(arr1), (int(startX1),int(startY1)))
+            # array paste
+            #arr1dum = np.zeros((height,width), dtype=bool)
+            #arr1dum[int(startY1):int(startY1+self.height), int(startX1):int(startX1+self.width)] = True
+            # im crop
+            #offx1,offy1 = self.world_to_raster_coord(ipX, ipY).as_GeoJSON()['coordinates']
+            #im1 = Image.fromarray(arr1).crop((offx1,offy1,offx1+width,offy1+height))
+            #arr1 = np.array(im1)
 
             # reframe array 2
             arr2 = rast2.data(nband2)
             arr2 = arr2.astype(np.dtype(pixeltype))
-            offx2,offy2 = rast2.world_to_raster_coord(ipX, ipY).as_GeoJSON()['coordinates']
-            im2 = Image.fromarray(arr2).crop((offx2,offy2,offx2+width,offy2+height))
-            arr2 = np.array(im2)
+            ulX,ulY = rast2.raster_to_world_coord(0, 0).as_GeoJSON()['coordinates']
+            startX2,startY2 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            # im paste
+            #print 'arr2 pixel bounds',startX2,startY2, startX2+rast2.width, startY2+rast2.height
+            frame_result.paste(Image.fromarray(arr2), (int(startX2),int(startY2)))
+            # array paste
+            #arr2dum = np.zeros((height,width), dtype=bool)
+            #arr2dum[int(startY2):int(startY2+rast2.height), int(startX2):int(startX2+rast2.width)] = True
+            # im crop
+            #offx2,offy2 = rast2.world_to_raster_coord(ipX, ipY).as_GeoJSON()['coordinates']
+            #im2 = Image.fromarray(arr2).crop((offx2,offy2,offx2+width,offy2+height))
+            #arr2 = np.array(im2)
 
-            # set environment
-            locenv = {'rast1': arr1, 'rast2': arr2, 'np': np}
+            # first paste each array onto frame
+            #frame_result[int(startY1):int(startY1+self.height), int(startX1):int(startX1+self.width)] = arr1
+            #frame_result[int(startY2):int(startY2+rast2.height), int(startX2):int(startX2+rast2.width)] = arr2
 
-            # parse expression
-            expression = expression.lower()
+            #frame_result.show()
 
-            def sql2py(sql):
-                # TODO: support multiple and/or statements
-                # ... 
+            # get coords of the intersecting parts (this is where the expression will be applied)
+            startX,endX = max(startX1,startX2),min(startX1+self.width,startX2+rast2.width)
+            startY,endY = max(startY1,startY2),min(startY1+self.height,startY2+rast2.height)
+            xmin,ymin = frame.raster_to_world_coord(startX,startY).as_GeoJSON()['coordinates']
+            xmax,ymax = frame.raster_to_world_coord(endX,endY).as_GeoJSON()['coordinates']
 
-                # convert rast references
-                sql = sql.replace('[rast1]', 'rast1').replace('[rast2]', 'rast2')
+            # only run expression if there is any intersection
+            #frameisec = arr1dum & arr2dum
+            if (endX-startX) > 0 and (endY-startY) > 0:
+                #print 'isec pixel bounds', startX, startY, endX, endY
 
-                # equal condition
-                # TODO: Need fix if = without spaces
-                sql = sql.replace(' = ', ' == ')
+                # clip arr1 to intersecting parts
+                pxmin1,pymin1 = self.world_to_raster_coord(xmin,ymin).as_GeoJSON()['coordinates']
+                pxmax1,pymax1 = self.world_to_raster_coord(xmax,ymax).as_GeoJSON()['coordinates']
+                pxmin1,pymin1,pxmax1,pymax1 = max(pxmin1,0),max(pymin1,0),min(pxmax1,self.width),min(pymax1,self.height)
+                pxmin1,pymin1,pxmax1,pymax1 = map(int, [pxmin1,pymin1,pxmax1,pymax1])
+                #print 'arr1 subset',pxmin1,pymin1,pxmax1,pymax1
+                arr1clip = arr1[pymin1:pymax1, pxmin1:pxmax1]
 
-                # max min
-                sql = sql.replace('max(', 'np.maximum(')
-                sql = sql.replace('min(', 'np.minimum(')
-                
-                # between clause, ie "col BETWEEN v1 AND v2"
-                if 'between' in sql:
-                    col,bw = sql.split(' between ')
-                    vmin,vmax = bw.split(' and ')
-                    sql = '({vmin} <= {col}) & ({col} <= {vmax})'.format(vmin=vmin, col=col, vmax=vmax)
+                # clip arr2 to intersecting parts
+                pxmin2,pymin2 = rast2.world_to_raster_coord(xmin,ymin).as_GeoJSON()['coordinates']
+                pxmax2,pymax2 = rast2.world_to_raster_coord(xmax,ymax).as_GeoJSON()['coordinates']
+                pxmin2,pymin2,pxmax2,pymax2 = max(pxmin2,0),max(pymin2,0),min(pxmax2,self.width),min(pymax2,self.height)
+                pxmin2,pymin2,pxmax2,pymax2 = map(int, [pxmin2,pymin2,pxmax2,pymax2])
+                #print 'arr2 subset',pxmin2,pymin2,pxmax2,pymax2
+                arr2clip = arr2[pymin2:pymax2, pxmin2:pxmax2]
+
+                # set environment
+                #print 'isec dims',arr1clip.shape,arr2clip.shape
+                locenv = {'rast1': arr1clip, 'rast2': arr2clip, 'np': np}
+
+                # parse expression
+                expression = expression.lower()
+
+                def sql2py(sql):
+                    # TODO: support multiple and/or statements
+                    # ... 
+
+                    # convert rast references
+                    sql = sql.replace('[rast1]', 'rast1').replace('[rast2]', 'rast2')
+
+                    # equal condition
+                    # TODO: Need fix if = without spaces
+                    sql = sql.replace(' = ', ' == ')
+
+                    # max min
+                    sql = sql.replace('max(', 'np.maximum(')
+                    sql = sql.replace('min(', 'np.minimum(')
                     
-                return sql
+                    # between clause, ie "col BETWEEN v1 AND v2"
+                    if 'between' in sql:
+                        col,bw = sql.split(' between ')
+                        vmin,vmax = bw.split(' and ')
+                        sql = '({vmin} <= {col}) & ({col} <= {vmax})'.format(vmin=vmin, col=col, vmax=vmax)
+                        
+                    return sql
 
-            # calculate
-            if expression.startswith('case'):
-                # conditional expression
-                # ie: case when then ... when then ... else
-                expression = expression.replace('case when ', '')
-                whenpart,elsepart = expression.split(' else ')
-                
-                whens = whenpart.split(' when ')
-                when_cumul = np.zeros((height,width), dtype=bool)
-                arr_result = np.zeros((height,width), dtype=pixeltype)
-                for when in whens:
-                    when,then = when.split(' then ')
+                # compute expression for the clipped grids
+                if expression.startswith('case'):
+                    # conditional expression
+                    # ie: case when then ... when then ... else
+                    expression = expression.replace('case when ', '')
+                    whenpart,elsepart = expression.split(' else ')
+                    
+                    whens = whenpart.split(' when ')
+                    when_cumul = np.zeros(arr1clip.shape, dtype=bool)
+                    isec_result = np.zeros(arr1clip.shape, dtype=pixeltype)
+                    #when_cumul = np.zeros((height,width), dtype=bool)
+                    #arr_result = np.zeros((height,width), dtype=pixeltype)
+                    for when in whens:
+                        when,then = when.split(' then ')
 
-                    # perform the math
-                    pyexpr = sql2py(when)
-                    #print 'when', pyexpr
-                    when_result = eval(pyexpr, {}, locenv)
-                    if np.any(when_result):
-                        when_result = when_result & (when_result ^ when_cumul) # exclude previous when-pixels
-                        when_cumul = when_cumul | when_result # update cumulative when-pixels
+                        # perform the math
+                        pyexpr = sql2py(when)
+                        #print 'when', pyexpr
+                        when_result = eval(pyexpr, {}, locenv)
+                        if np.any(when_result):
+                            when_result = when_result & (when_result ^ when_cumul) # exclude previous when-pixels
+                            when_cumul = when_cumul | when_result # update cumulative when-pixels
 
-                        pyexpr = sql2py(then)
-                        #print 'then', pyexpr
-                        then_result = eval(pyexpr, {}, locenv)
+                            pyexpr = sql2py(then)
+                            #print 'then', pyexpr
+                            then_result = eval(pyexpr, {}, locenv)
+
+                            # set values in results
+                            isec_result[when_result] = then_result
+
+                    # final else clause
+                    remain = ~when_cumul
+                    if np.any(remain):
+                        elsepart = elsepart.replace(' end', '')
+                        pyexpr = sql2py(elsepart)
+                        #print 'else', pyexpr
+                        else_result = eval(pyexpr, {}, locenv)
 
                         # set values in results
-                        arr_result[when_result] = then_result
+                        isec_result[remain] = else_result
 
-                # final else clause
-                remain = ~when_cumul
-                if np.any(remain):
-                    elsepart = elsepart.replace(' end', '')
-                    pyexpr = sql2py(elsepart)
-                    #print 'else', pyexpr
-                    else_result = eval(pyexpr, {}, locenv)
+                else:
+                    # simple expression
+                    pyexpr = sql2py(expression)
+                    isec_result = eval(pyexpr, {}, locenv)
 
-                    # set values in results
-                    arr_result[remain] = else_result
+                # paste expression results onto the intersecting region
+                #frame_result[frameisec] = isec_result
+                frame_result.paste(Image.fromarray(isec_result), (int(startX),int(startY)))
 
-            else:
-                # simple expression
-                pyexpr = sql2py(expression)
-                arr_result = eval(pyexpr, {}, locenv)
-                
+            # TODO: handle nodatavals
+            # ...
+
+            frame_result = np.array(frame_result)
+                    
             # byteswap
             #if endianFmt != arr_result.dtype.byteorder:
             #    # TODO: HANDLE NATIVE BYTEORDER, IE '='
             #    arr_result = arr_result.byteswap()
 
             # write arr result
-            databytes = arr_result.tostring()
+            databytes = frame_result.tostring()
             wkb += databytes
 
 
