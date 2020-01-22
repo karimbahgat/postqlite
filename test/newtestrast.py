@@ -78,6 +78,12 @@ for row in cur.execute('select st_asText(st_box2d(rast)) from test'):
     print row
     break
 
+# box2d agg
+print 'box2d agg'
+for row in cur.execute('select st_asText(st_Extent(st_box2d(rast))) from test'):
+    print row
+    break
+
 # envelope
 print 'envelope'
 for row in cur.execute('select st_asText(st_envelope(rast)) from test'):
@@ -150,11 +156,16 @@ for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as 
     print rast1.same_alignment(rast2)
     break
 
-# same alignment
+# same alignment, aggregate
 print 'same alignment, aggregate'
 for row in cur.execute("select st_sameAlignment(rast) from test"):
     print row
     break
+
+# intersects
+print 'intersects'
+for (r1,r2) in cur.execute("select t1.rast,t2.rast from test as t1,test as t2 where st_Intersects(t1.rast, t2.rast) limit 10 offset 1"):
+    print r1.bbox(),r2.bbox()
 
 
 ####################
@@ -162,7 +173,7 @@ for row in cur.execute("select st_sameAlignment(rast) from test"):
 
 # band selection
 print 'band selection'
-for row in cur.execute("select st_numBands(rast), st_numBands(st_Band(rast, 1)), st_numBands(st_Band(rast, '1,2')) from test"):
+for row in cur.execute("select st_numBands(rast), st_numBands(st_Band(rast, 1)), st_numBands(st_Band(rast, '1')) from test"):
     print row
     break
 
@@ -260,7 +271,7 @@ for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as 
 print 'union aggregate'
 
 # in-db (unknown step error...?)
-##for (rast,) in cur.execute("select st_union(rast) from test"):
+##for (rast,) in cur.execute("select st_metadata(st_rasterunion(rast)) from test"):
 ##    print rast
 ##    break
 

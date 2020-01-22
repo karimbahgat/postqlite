@@ -13,6 +13,9 @@ from ..vector.geometry import Geometry
 
 from wkb_raster import write_wkb_raster
 
+# TODO: All vector and raster funcs and aggs must be moved to a separate 'register.py' module
+# with separate functions for each that detects vector vs raster and calls the corresponding func/agg
+# ... 
 
 def register_funcs(conn):
     # see: https://postgis.net/docs/reference.html
@@ -71,7 +74,7 @@ def register_funcs(conn):
 
     # changing
     conn.create_function('st_Resize', -1, lambda *args: Raster(args[0]).resize(*args[1:]).dump_wkb() if args[0] else None)
-    #conn.create_function('st_Rescale', 3, lambda wkb,width,height: Raster(wkb).rescale(width, height).dump_wkb() if wkb else None)
+    #conn.create_function('st_Rescale', -1, lambda *args: Raster(args[0]).rescale(*args[1:]).dump_wkb() if args[0] else None)
     #conn.create_function('st_Resample', 2, lambda wkb,refwkb: Raster(wkb).resample(Raster(refwkb)).dump_wkb() if wkb else None)
     #conn.create_function('st_Transform', 2, lambda wkb,crs: Raster(wkb).transform(crs).dump_wkb() if wkb else None)
 
@@ -83,12 +86,16 @@ def register_funcs(conn):
 
     # relations
     conn.create_function('st_SameAlignment', 2, lambda wkb,otherwkb: Raster(wkb).same_alignment(Raster(otherwkb)) if wkb and otherwkb else None)
-    #conn.create_function('st_Intersects', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
+    conn.create_function('st_Intersects', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
     #conn.create_function('st_Disjoint', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
 
 def register_aggs(conn):
     conn.create_aggregate('st_SameAlignment', 1, ST_SameAlignment)
-    conn.create_aggregate('st_Union', -1, ST_Union)
+    # TODO: ST_Union name currently crashes with the geometry agg by the same name
+    # NOTE: The WKB format restricts the width/height to max 65535
+    # ...so will fail if unioning very large rasters, which I guess is okay
+    # ...since the purpose is to work with tiles iteratively
+    conn.create_aggregate('st_RasterUnion', -1, ST_Union)
 
 
 # classes
@@ -702,7 +709,7 @@ class Raster(object):
         assert len(args) >= 2
         if isinstance(args[0], int) and isinstance(args[1], int):
             width, height = args[:2]
-            algorithm = args[2] if len(args) >= 3 else 'nearestneighbor'
+            algorithm = args[2] if len(args) >= 3 else 'nearestneighbour'
         else:
             raise Exception('Invalid function args: {}'.format(args))
 
@@ -759,6 +766,24 @@ class Raster(object):
         wkb_buf = buffer(wkb)
         rast = Raster(wkb_buf)
         return rast
+
+##    def rescale(self, *args):
+##        if not self._header:
+##            self._load_header()
+##
+##        # parse args
+##        assert len(args) >= 2
+##        if isinstance(args[0], (float,int)) and isinstance(args[1], (float,int)):
+##            scalex,scaley = args[:2]
+##            algorithm = args[2] if len(args) >= 3 else 'nearestneighbour'
+##        else:
+##            raise Exception('Invalid function args: {}'.format(args))
+##
+##        resample_args = []
+##        # ...
+##
+##        rast = self.resample(*resample_args)
+##        return rast
 
     def mapalgebra(self, *args):
         if not self._header:
@@ -1225,7 +1250,19 @@ class Raster(object):
 
         # coorner coordinates do not match up
         return False
-        
+
+    def intersects(self, rastB):
+        # for now only allow the simple raster-to-raster intersects
+        if not self._header:
+            self._load_header()
+        if not rastB._header:
+            rastB._load_header()
+
+        hullA = self.convex_hull()
+        hullB = rastB.convex_hull()
+
+        return hullA.intersects(hullB)
+
 
 ##    def add_band(self, *args, **kwargs):
 ##        if args and isinstance(args[0], Band):
