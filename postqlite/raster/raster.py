@@ -2,7 +2,7 @@
 import numpy as np
 import math
 import json
-from struct import unpack_from, pack, calcsize
+from struct import unpack_from, pack_into, pack, calcsize
 
 from affine import Affine
 from shapely.geometry import Point, MultiPoint, Polygon
@@ -43,8 +43,18 @@ def register_funcs(conn):
     conn.create_function('st_BandPixelType', 2, lambda wkb,band: Raster(wkb).pixel_type(band) if wkb else None)
     #conn.create_function('st_HasNoBand', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
 
+    # setting
+    conn.create_function('st_SetRotation', 2, lambda wkb,rad: Raster(wkb).set_rotation(rad).dump_wkb() if wkb else None)
+    conn.create_function('st_SetScale', 3, lambda wkb,x,y: Raster(wkb).set_scale(x,y).dump_wkb() if wkb else None)
+    conn.create_function('st_SetSkew', 3, lambda wkb,x,y: Raster(wkb).set_skew(x,y).dump_wkb() if wkb else None)
+    conn.create_function('st_SetUpperLeft', 3, lambda wkb,x,y: Raster(wkb).set_upperleft(x,y).dump_wkb() if wkb else None)
+
     # representations
+    #conn.create_function('st_Summary', 1, lambda wkb: Raster(wkb).summary() if wkb else None)
     conn.create_function('st_Envelope', 1, lambda wkb: Raster(wkb).envelope().dump_wkb() if wkb else None)
+    conn.create_function('st_ConvexHull', 1, lambda wkb: Raster(wkb).convex_hull().dump_wkb() if wkb else None)
+    #conn.create_function('st_MinConvexHull', 1, lambda wkb: Raster(wkb).min_convex_hull().dump_wkb() if wkb else None)
+    conn.create_function('st_AsBinary', 1, lambda wkb: Raster(wkb).dump_wkb() if wkb else None)
     #PNG+JPEG? requires img type column
 
     # querying
@@ -348,6 +358,72 @@ class Raster(object):
         xmin,ymin,xmax,ymax = self.bbox()
         polygon = Geometry(Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)]).wkb)
         return polygon
+
+    def convex_hull(self):
+        w,h = self.width,self.height
+        corners = [(0,0),(0,h),(w,h),(w,0)]
+        coords = [self.raster_to_world_coord(px,py).as_GeoJSON()['coordinates'] for px,py in corners]
+        coords.append(coords[-1])
+        polygon = Geometry(Polygon(coords).wkb)
+        return polygon
+
+    # setting
+
+    # TODO: not sure if these should write to the original buffer, or create separate copies...? 
+
+    def set_rotation(self, rotation):
+        if not self._header:
+            self._load_header()
+
+        # TODO: make sure this is the correct affine sequence...
+        ang = math.degrees(rotation)
+        self._affine = self._affine * Affine.rotation(ang)
+
+        # update params
+        xscale,xskew,xoff, yskew,yscale,yoff, _,_,_ = list(self._affine)
+        self.set_scale(xscale, yscale)
+        self.set_skew(xskew, yskew)
+
+        return self
+
+    def set_scale(self, scaleX, scaleY):
+        if not self._header:
+            self._load_header()
+            
+        self._header['scaleX'] = scaleX
+        self._header['scaleY'] = scaleY
+
+        # affines start after 'bHH' in the order of scaleX,scaleY,ipX,ipY,skewX,skewY
+        endian = self._header['endian']
+        pack_into(endian + 'dd', self._wkb, 1+2+2, scaleX, scaleY)
+
+        return self
+
+    def set_skew(self, skewX, skewY):
+        if not self._header:
+            self._load_header()
+            
+        self._header['skewX'] = skewX
+        self._header['skewY'] = skewY
+
+        # affines start after 'bHH' in the order of scaleX,scaleY,ipX,ipY,skewX,skewY
+        endian = self._header['endian']
+        pack_into(endian + 'dd', self._wkb, 1+2+2+8*4, skewX, skewY)
+
+        return self
+
+    def set_upperleft(self, upperLeftX, upperLeftY):
+        if not self._header:
+            self._load_header()
+            
+        self._header['ipX'] = upperLeftX
+        self._header['ipY'] = upperLeftY
+
+        # affines start after 'bHH' in the order of scaleX,scaleY,ipX,ipY,skewX,skewY
+        endian = self._header['endian']
+        pack_into(endian + 'dd', self._wkb, 1+2+2+8+8, upperLeftX, upperLeftY)
+
+        return self
 
     # querying
 

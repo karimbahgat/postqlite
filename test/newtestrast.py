@@ -84,6 +84,45 @@ for row in cur.execute('select st_asText(st_envelope(rast)) from test'):
     print row
     break
 
+# convex hull
+print 'convex hull'
+for row in cur.execute('select st_asText(st_ConvexHull(rast)) from test'):
+    print row
+    break
+
+
+####################
+# setting
+
+# scale
+print 'scale'
+for row in cur.execute('select st_MetaData(st_SetScale(rast,-99,-99)) from test'):
+    print row
+    break
+
+# skew
+print 'skew'
+for row in cur.execute('select st_MetaData(st_SetSkew(rast,-99,-99)) from test'):
+    print row
+    break
+
+# offset
+print 'offset'
+for row in cur.execute('select st_MetaData(st_SetUpperLeft(rast,-99,-99)) from test'):
+    print row
+    break
+
+# rotate
+print 'rotate'
+for row in cur.execute('select st_asText(st_ConvexHull(st_SetRotation(rast,0.78))),st_ConvexHull(st_SetRotation(rast,0.78)) as "[geom]" from test'):
+    print row
+##    geoj = row[1].as_GeoJSON()
+##    import pythongis as pg
+##    v = pg.VectorData()
+##    v.add_feature([], geoj)
+##    v.view()
+    break
+
 
 ####################
 # querying
@@ -230,9 +269,9 @@ import cProfile
 #p=cProfile.Profile()
 #p.enable()
 agg = postqlite.raster.raster.ST_Union()
-for (rast,) in cur.execute("select rast from test"):
+for (rast,) in cur.execute('select st_setUpperLeft(rast,st_upperleftx(rast)*0.75,st_upperlefty(rast)*0.75) as "[rast]" from test'):
     print rast
-    agg.step(rast.dump_wkb(), 'last')
+    agg.step(rast.dump_wkb(), 'sum')
     #Image.fromarray(agg.result.data(1)).show()
 rast = postqlite.raster.raster.Raster(agg.finalize())
 #p.create_stats()
