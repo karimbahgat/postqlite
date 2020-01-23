@@ -29,6 +29,7 @@ for tile in d.tiled(tilesize=(1000,1000)):
 print 'full', cur.execute('select count(oid) from test').fetchone()
 
 
+
 #############
 # construction
 
@@ -266,6 +267,20 @@ for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as 
     #print 'between'
     #result = rast.mapalgebra(rast2 'case when [rast1] = 0 then 0 when [rast1] between 1 and 100 then 1 when [rast1] between 101 and 200 then 2 else 99 end')
     #print result.summarystats()
+
+# intersection
+print 'intersection'
+for rast1,rast2 in cur.execute("""with cross as (select t1.rast as rast, st_setUpperLeft(t2.rast,st_upperleftx(t2.rast)*0.75,st_upperlefty(t2.rast)*0.75) as shift
+                                                    from test as t1, test as t2
+                                                    where t1.rast != t2.rast)
+                                  select rast as "[rast]", shift as "[rast]"
+                                  from cross
+                                  where st_intersects(rast,shift)
+                                  limit 3
+                                    """):
+    print rast1.bbox(),rast2.bbox(),rast1.intersects(rast2)
+    isec = rast1.intersection(rast2, 'band1')
+    Image.fromarray(isec.data(1)).show()
 
 # union aggregate
 print 'union aggregate'

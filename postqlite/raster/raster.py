@@ -80,8 +80,7 @@ def register_funcs(conn):
 
     # interacting
     #conn.create_function('st_Clip', 2, lambda wkb,geomwkb: Raster(wkb).clip(Geometry(geomwkb)).dump_wkb() if wkb and geomwkb else None)
-    #conn.create_function('st_Intersection', 2, lambda wkb,otherwkb: Raster(wkb).intersection(Raster(otherwkb)).dump_wkb() if wkb and otherwkb else None)
-    #conn.create_function('st_Union', 2, lambda wkb,otherwkb: Raster(wkb).union(Raster(otherwkb)).dump_wkb() if wkb and otherwkb else None)
+    conn.create_function('st_Intersection', -1, lambda *args: Raster(args[0]).intersection(Raster(*args[1:])).dump_wkb() if args[0] else None)
     conn.create_function('st_MapAlgebra', -1, lambda *args: Raster(args[0]).mapalgebra(*args[1:]).dump_wkb() if args[0] else None)
 
     # relations
@@ -368,7 +367,7 @@ class Raster(object):
 
     def convex_hull(self):
         w,h = self.width,self.height
-        corners = [(0,0),(0,h),(w,h),(w,0)]
+        corners = [(0,0),(0,h-1),(w-1,h-1),(w-1,0)]
         coords = [self.raster_to_world_coord(px,py).as_GeoJSON()['coordinates'] for px,py in corners]
         coords.append(coords[-1])
         polygon = Geometry(Polygon(coords).wkb)
@@ -785,6 +784,46 @@ class Raster(object):
 ##        rast = self.resample(*resample_args)
 ##        return rast
 
+    def intersection(self, *args):
+        if not self._header:
+            self._load_header()
+            
+        # parse args
+        assert len(args) >= 1
+        if isinstance(args[0], Raster):
+            if len(args) >= 2 and isinstance(args[1], basestring):
+                # raster rast2, text returnband, double precision[] nodataval
+                rast2,returnband = args[:2]
+                nodataval = args[2] if len(args) >= 3 else None
+                band1 = band2 = 1
+            else:
+                # raster rast2, double precision[] nodataval
+                rast2 = args[0]
+                returnband = 'band1' # correct default? 
+                nodataval = args[1] if len(args) >= 2 else None
+                band1 = band2 = 1
+        elif isinstance(args[0], int):
+            if len(args) >= 4 and isinstance(args[3], basestring):
+                # integer band1, raster rast2, integer band2, text returnband, double precision[] nodataval
+                band1,rast2,band2,returnband = args[:4]
+                nodataval = args[4] if len(args) >= 5 else None
+            else:
+                # integer band1, raster rast2, integer band2, double precision[] nodataval
+                band1,rast2,band2 = args[:3]
+                returnband = 'band1' # correct default? 
+                nodataval = args[3] if len(args) >= 4 else None
+        else:
+            raise Exception('Invalid function args: {}'.format(args))
+
+        # prep args for mapalgebra
+        # integer nband1, raster rast2, integer nband2, text expression, text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
+        returnband = returnband.lower()
+        expr = {'band1':'[rast1]', 'band2':'[rast2]'}[returnband] # TODO: 'both' not yet supported 
+        pixeltype = None
+        # nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
+        result = self.mapalgebra(band1, rast2, band2, expr, pixeltype, 'intersection')
+        return result
+
     def mapalgebra(self, *args):
         if not self._header:
             self._load_header()
@@ -983,17 +1022,19 @@ class Raster(object):
                 
             elif extenttype == 'intersection':
                 # get intersection of coord bboxes
-                box1 = self.box2d()
-                box2 = rast2.box2d()
-                box = box1.intersection(box2)
-                # return early if empty result, ie no intersection
-                if box.type() == 'GeometryCollection':
-                    print box.as_GeoJSON()
+                box1 = self.envelope()
+                box2 = rast2.envelope()
+                if box1.intersects(box2):
+                    box = box1.intersection(box2)
+                else:
+                    # if empty result, ie no intersection
+                    # return None?
+                    # or return zero width/height raster? 
                     raise NotImplemented
                 # calculate rast1 pixel positions for the intersected bbox
-                (xmin,ymin),(xmax,ymax) = box.as_GeoJSON()['coordinates']
+                xmin,ymin,xmax,ymax = box.bbox()
                 corners = [(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin)]
-                pixelcorners = [self.world_to_raster_coord(x,y) for x,y in corners]
+                pixelcorners = [self.world_to_raster_coord(x,y).as_GeoJSON()['coordinates'] for x,y in corners]
                 pxs,pys = zip(*pixelcorners)
                 pxmin,pymin,pxmax,pymax = min(pxs),min(pys),max(pxs),max(pys)
                 # calculate new georef from these pixel positions
