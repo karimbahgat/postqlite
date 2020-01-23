@@ -280,7 +280,35 @@ for rast1,rast2 in cur.execute("""with cross as (select t1.rast as rast, st_setU
                                     """):
     print rast1.bbox(),rast2.bbox(),rast1.intersects(rast2)
     isec = rast1.intersection(rast2, 'band1')
-    Image.fromarray(isec.data(1)).show()
+    print isec.bbox()
+    #Image.fromarray(isec.data(1)).show()
+
+print 'intersection 2'
+##for rasterized,intersected in cur.execute('''
+##                                            select st_asRaster(st_Buffer(st_Point(2000,2000), 500), rast, 'u1', 255) as "[rast]",
+##                                                    st_Intersection(st_asRaster(st_Buffer(st_Point(2000,2000), 500), rast, 'u1', 255), rast) as "[rast]"
+##                                            from test
+##                                            where st_intersects(st_Buffer(st_Point(2000,2000), 500), rast)
+##                                            '''):
+for buff,rast in cur.execute('''
+                                select st_Buffer(st_Point(2000,2000), 500) as "[geom]",
+                                        rast
+                                from test
+                                where st_distance(st_Buffer(st_Point(2000,2000), 500), st_Envelope(rast)) = 0
+                                limit 3
+                                '''):
+    print buff.bbox(),rast.bbox()
+    rasterized = buff.as_raster(rast, 'u1', 255)
+    intersected = rasterized.mapalgebra(rast,'max([rast1],[rast2])') #intersection(rast, 'band2')
+    
+    #arr = rasterized.data(1)
+    #from PIL import Image
+    #Image.fromarray(arr).show()
+    
+    arr = intersected.data(1)
+    from PIL import Image
+    Image.fromarray(arr).show()
+
 
 # union aggregate
 print 'union aggregate'

@@ -69,6 +69,17 @@ for row in cur.execute('select st_asGeoJSON(st_MakeEnvelope(0,0,10,10)) from tes
 # as svg
 # ...
 
+# as raster
+print 'as raster'
+for geom,rast in cur.execute('select st_Buffer(st_Point(0,0), 50) as "[geom]",st_MakeEmptyRaster(720,360,-180,90,0.5,-0.5,0,0) as "[rast]" from test'):
+    print geom.bbox(),rast.metadata()
+    grast = geom.as_raster(rast, 'u1', 255)
+    print grast.summarystats()
+    #arr = grast.data(1)
+    #from PIL import Image
+    #Image.fromarray(arr).show()
+    break
+
 
 #################
 # basic info

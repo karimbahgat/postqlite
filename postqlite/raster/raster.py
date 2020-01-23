@@ -13,8 +13,11 @@ from ..vector.geometry import Geometry
 
 from wkb_raster import write_wkb_raster
 
-# TODO: All vector and raster funcs and aggs must be moved to a separate 'register.py' module
+# TODOs:
+# 1: Honor nodata values throughout using np.ma arrays if rast has nodata ('hasNodataValue'), incl summarystats, mapalgebra, intersection, etc
+# 2: All vector and raster funcs and aggs must be moved to a separate 'register.py' module
 # with separate functions for each that detects vector vs raster and calls the corresponding func/agg
+# 3: Add geometry burning function, asRaster() using basic PIL drawing
 # ... 
 
 def register_funcs(conn):
@@ -194,12 +197,15 @@ def make_empty_raster(*args):
         width,height,upperleftx,upperlefty,scalex,scaley,skewx,skewy = args[:8]
         srid = args[8] if len(args) == 9 else 0
         
-    elif len(args) >= 5:
+    elif len(args) == 5:
         # integer width, integer height, float8 upperleftx, float8 upperlefty, float8 pixelsize
         width,height,upperleftx,upperlefty,scale = args[:5]
         scalex = scaley = scale
         skewx,skewy = 0,0
         srid = 0
+
+    else:
+        raise Exception('Invalid function args: {}'.format(args))
 
     # create raster
     wkb = b''

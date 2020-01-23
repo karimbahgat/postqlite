@@ -40,7 +40,7 @@ def register_funcs(conn):
     # representation
     conn.create_function('st_AsText', 1, lambda wkb: Geometry(wkb).as_WKT() if wkb != None else None )
     conn.create_function('st_AsGeoJSON', 1, lambda wkb: json.dumps(Geometry(wkb).as_GeoJSON()) if wkb != None else None )
-    #conn.create_function('st_AsRaster', 1, lambda wkb,opts: Geometry(wkb).as_raster(**opts)) if wkb != None else None )
+    conn.create_function('st_AsRaster', -1, lambda *args: Geometry(args[0]).as_raster(*args[1:]).dump_wkb() if args[0] else None )
     
     # brings back simple types
     conn.create_function('st_Type', 1, lambda wkb: Geometry(wkb).type() if wkb != None else None )
@@ -357,6 +357,135 @@ class Geometry(object):
     def as_SVG(self):
         # create directly from wkb
         pass
+
+    def as_raster(self, *args):
+        from ..raster.raster import Raster, make_empty_raster
+
+        # parse args
+        # GROUP 1: existing raster
+        if isinstance(args[0], Raster):
+            # raster ref, text pixeltype, double precision value=1, double precision nodataval=0, boolean touched=false
+            ref, pixeltype = args[:2]
+            value = args[2] if len(args) >= 3 else 1
+            nodataval = args[3] if len(args) >= 4 else 0
+        # GROUP 2: set params, autocalc width/height
+##        elif isinstance(args[0], float) and isinstance(args[2], float):
+##            # double precision scalex, double precision scaley, double precision gridx, double precision gridy, text pixeltype, double precision value=1, double precision nodataval=0, double precision skewx=0, double precision skewy=0, boolean touched=false
+##            # aligns upperleft to gridx/y
+##            pass
+        elif isinstance(args[0], float) and isinstance(args[2], basestring):
+            # double precision scalex, double precision scaley, text pixeltype, double precision value=1, double precision nodataval=0, double precision upperleftx=NULL, double precision upperlefty=NULL, double precision skewx=0, double precision skewy=0, boolean touched=false
+            # uses upperleft
+            scaleX,scaleY,pixeltype = args[:3]
+            value = args[3] if len(args) >= 4 else 1
+            nodataval = args[4] if len(args) >= 5 else 0
+            xmin,ymin,xmax,ymax = self.bbox()
+            upperLeftX = args[5] if len(args) >= 6 else xmin
+            upperLeftY = args[6] if len(args) >= 7 else ymin
+            skewX = args[7] if len(args) >= 8 else 0
+            skewY = args[8] if len(args) >= 9 else 0
+            width = (xmax-xmin) / float(scaleX)
+            height = (ymax-ymin) / float(scaleY)
+            ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
+        # GROUP 3: set width/height, autocalc params
+##        elif isinstance(args[0], int) and isinstance(args[2], float):
+##            # integer width, integer height, double precision gridx, double precision gridy, text pixeltype, double precision value=1, double precision nodataval=0, double precision skewx=0, double precision skewy=0, boolean touched=false
+##            # aligns upperleft to gridx/y
+##            width,height,pixeltype = ...
+        elif isinstance(args[0], int) and isinstance(args[2], basestring):
+            # integer width, integer height, text pixeltype, double precision value=1, double precision nodataval=0, double precision upperleftx=NULL, double precision upperlefty=NULL, double precision skewx=0, double precision skewy=0, boolean touched=false
+            # uses upperleft
+            width,height,pixeltype = args[:3]
+            value = args[3] if len(args) >= 4 else 1
+            nodataval = args[4] if len(args) >= 5 else 0
+            xmin,ymin,xmax,ymax = self.bbox()
+            upperLeftX = args[5] if len(args) >= 6 else xmin
+            upperLeftY = args[6] if len(args) >= 7 else ymin
+            skewX = args[7] if len(args) >= 8 else 0
+            skewY = args[8] if len(args) >= 9 else 0
+            scaleX = (xmax-xmin) / float(width)
+            scaleY = (ymax-ymin) / float(height)
+            ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
+        else:
+            raise Exception('Invalid function args: {}'.format(args))
+
+        # create drawer
+        import numpy as np
+        from PIL import Image,ImageDraw,ImagePath
+        mode = {'b1':'1', 'u1':'L', 'i4':'I', 'f8':'F'}[pixeltype]
+        img = Image.new(mode, (ref.width, ref.height), nodataval)
+        drawer = ImageDraw.Draw(img)
+
+        # get the raster's inverse affine to use for drawing
+        a,b,c,d,e,f,_,_,_ = list(~ref._affine) 
+
+        # set burn values
+        fill = value
+        outline = None
+        holefill = nodataval
+        holeoutline = None
+        #print ["burnmain",fill,outline,"burnhole",holefill,holeoutline]
+
+        # make all multis so can treat all same
+        geoj = self.as_GeoJSON()
+        geotype = geoj['type']
+        coords = geoj["coordinates"]
+        if not "Multi" in geotype:
+            coords = [coords]
+
+        # polygon, basic black fill, no outline
+        if "Polygon" in geotype:
+            for poly in coords:
+                # exterior
+                exterior = [tuple(p) for p in poly[0]]
+                path = ImagePath.Path(exterior)
+                #print list(path)[:10]
+                path.transform((a,b,c,d,e,f))
+                #print list(path)[:10]
+                drawer.polygon(path, fill=fill, outline=outline)
+                # holes
+                if len(poly) > 1:
+                    for hole in poly[1:]:
+                        hole = [tuple(p) for p in hole]
+                        path = ImagePath.Path(hole)
+                        path.transform((a,b,c,d,e,f))
+                        drawer.polygon(path, fill=holefill, outline=holeoutline)
+                        
+        # line, 1 pixel line thickness
+        elif "LineString" in geotype:
+            for line in coords:
+                path = ImagePath.Path(line)
+                path.transform((a,b,c,d,e,f))
+                drawer.line(path, fill=fill)
+            
+        # point, 1 pixel square size
+        elif "Point" in geotype:
+            path = ImagePath.Path(coords)
+            path.transform((a,b,c,d,e,f))
+            drawer.point(path, fill=fill)
+
+        # make raster from drawn img
+        out = make_empty_raster(ref)
+        out._load_header()
+        arr = np.array(img)
+        # TODO: prob outsource to builtin add_band() method
+        wkb = bytes(out._wkb)
+        dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
+                  'u2', 'i4', 'u4', 'f4', 'f8']
+        pixeltypenum = dtypes.index(pixeltype)
+        bandheader = {'isOffline': False,
+                      'hasNodataValue': True,
+                      'isNodataValue': False, # maybe check?
+                      'pixtype': pixeltypenum,
+                      'nodata': nodataval,
+                      }
+        wkb += out._write_band_header(bandheader)
+        wkb += arr.tostring()
+
+        wkb_buf = buffer(wkb)
+        rast = Raster(wkb_buf)
+        return rast
+            
 
     # require shapely
 
