@@ -381,11 +381,13 @@ class Geometry(object):
             nodataval = args[4] if len(args) >= 5 else 0
             xmin,ymin,xmax,ymax = self.bbox()
             upperLeftX = args[5] if len(args) >= 6 else xmin
-            upperLeftY = args[6] if len(args) >= 7 else ymin
+            upperLeftY = args[6] if len(args) >= 7 else ymax # flipped y by default
             skewX = args[7] if len(args) >= 8 else 0
             skewY = args[8] if len(args) >= 9 else 0
             width = (xmax-xmin) / float(scaleX)
             height = (ymax-ymin) / float(scaleY)
+            width = int(round(abs(width)))
+            height = int(round(abs(height)))
             ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
         # GROUP 3: set width/height, autocalc params
 ##        elif isinstance(args[0], int) and isinstance(args[2], float):
@@ -400,11 +402,11 @@ class Geometry(object):
             nodataval = args[4] if len(args) >= 5 else 0
             xmin,ymin,xmax,ymax = self.bbox()
             upperLeftX = args[5] if len(args) >= 6 else xmin
-            upperLeftY = args[6] if len(args) >= 7 else ymin
+            upperLeftY = args[6] if len(args) >= 7 else ymax # flipped y by default
             skewX = args[7] if len(args) >= 8 else 0
             skewY = args[8] if len(args) >= 9 else 0
             scaleX = (xmax-xmin) / float(width)
-            scaleY = (ymax-ymin) / float(height)
+            scaleY = (ymax-ymin) / float(height) * -1 # flipped y by default
             ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
         else:
             raise Exception('Invalid function args: {}'.format(args))

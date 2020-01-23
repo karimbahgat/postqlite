@@ -1,5 +1,6 @@
 
 import numpy as np
+import numpy.ma as ma
 import math
 import json
 from struct import unpack_from, pack_into, pack, calcsize
@@ -14,10 +15,12 @@ from ..vector.geometry import Geometry
 from wkb_raster import write_wkb_raster
 
 # TODOs:
-# 1: Honor nodata values throughout using np.ma arrays if rast has nodata ('hasNodataValue'), incl summarystats, mapalgebra, intersection, etc
+# 1 (DONE): Honor nodata values throughout using np.ma arrays if rast has nodata ('hasNodataValue'), incl summarystats, mapalgebra, intersection, etc
 # 2: All vector and raster funcs and aggs must be moved to a separate 'register.py' module
 # with separate functions for each that detects vector vs raster and calls the corresponding func/agg
-# 3: Add geometry burning function, asRaster() using basic PIL drawing
+# 3 (DONE): Add geometry burning function, asRaster() using basic PIL drawing
+# 4: Figure out correct wkb handling (keep it as sqlite's read-write buffer? does that change the underlaying db data? how to create own read-write buffer?)
+# 5: Make an interactive tk app for writing sql directly
 # ... 
 
 def register_funcs(conn):
@@ -44,7 +47,7 @@ def register_funcs(conn):
     conn.create_function('st_Box2D', 1, lambda wkb: Raster(wkb).box2d().dump_wkb() if wkb else None)
 
     #conn.create_function('st_BandMetaData', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
-    conn.create_function('st_BandNoDataValue', 2, lambda wkb,band: Raster(wkb).no_data_value(band) if wkb else None)
+    conn.create_function('st_BandNoDataValue', 2, lambda wkb,band: Raster(wkb).nodataval(band) if wkb else None)
     #conn.create_function('st_BandIsNoData', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
     conn.create_function('st_BandPixelType', 2, lambda wkb,band: Raster(wkb).pixel_type(band) if wkb else None)
     #conn.create_function('st_HasNoBand', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
@@ -84,6 +87,7 @@ def register_funcs(conn):
     # interacting
     #conn.create_function('st_Clip', 2, lambda wkb,geomwkb: Raster(wkb).clip(Geometry(geomwkb)).dump_wkb() if wkb and geomwkb else None)
     conn.create_function('st_Intersection', -1, lambda *args: Raster(args[0]).intersection(Raster(*args[1:])).dump_wkb() if args[0] else None)
+    conn.create_function('st_RasterIntersection', -1, lambda *args: Raster(args[0]).intersection(Raster(*args[1:])).dump_wkb() if args[0] else None)
     conn.create_function('st_MapAlgebra', -1, lambda *args: Raster(args[0]).mapalgebra(*args[1:]).dump_wkb() if args[0] else None)
 
     # relations
@@ -192,12 +196,12 @@ def make_empty_raster(*args):
         meta = rast.metadata()
         width,height,upperleftx,upperlefty,scalex,scaley,skewx,skewy,srid = [meta[k]
                                                                              for k in 'width,height,upperleftx,upperlefty,scalex,scaley,skewx,skewy,srid'.split(',')]
-    elif len(args) >= 8:
+    elif len(args) >= 8 and isinstance(args[0], int):
         # integer width, integer height, float8 upperleftx, float8 upperlefty, float8 scalex, float8 scaley, float8 skewx, float8 skewy, integer srid=unknown
         width,height,upperleftx,upperlefty,scalex,scaley,skewx,skewy = args[:8]
         srid = args[8] if len(args) == 9 else 0
         
-    elif len(args) == 5:
+    elif len(args) == 5 and isinstance(args[0], int):
         # integer width, integer height, float8 upperleftx, float8 upperlefty, float8 pixelsize
         width,height,upperleftx,upperlefty,scale = args[:5]
         scalex = scaley = scale
@@ -614,7 +618,7 @@ class Raster(object):
         rast = Raster(wkb_buf)
         return rast
 
-    def no_data_value(self, band=1):
+    def nodataval(self, band=1):
         if not self._header:
             self._load_header()
 
@@ -632,7 +636,8 @@ class Raster(object):
 
         # Read the nodata value
         (nodata,) = unpack_from(endian + fmt, self._wkb, offset=start+1)
-        return nodata
+        hasNodataValue = bool(bits & 64)  # second bit
+        return nodata if hasNodataValue else None
 
     def pixel_type(self, band=1):
         '''Returns the numpy data type'''
@@ -668,13 +673,19 @@ class Raster(object):
         # Based on the pixel type, determine the data type
         pixtype = bits & int('00001111', 2) # bits 5-8
 
+        fmts = ['?', 'B', 'B', 'b', 'B', 'h',
+                'H', 'i', 'I', 'f', 'd']
         dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
                   'u2', 'i4', 'u4', 'f4', 'f8']
-        dtype = dtypes[pixtype]
-
-        # Skip nodataval
         sizes = [1, 1, 1, 1, 1, 2, 2, 4, 4, 4, 8]
+        fmt = fmts[pixtype]
+        dtype = dtypes[pixtype]
         size = sizes[pixtype]
+
+        # Read nodataval
+        hasNodataValue = bool(bits & 64)  # second bit
+        if hasNodataValue:
+            (nodata,) = unpack_from(endian + fmt, self._wkb, offset=start+1)
         skip += size
 
         # Read data
@@ -688,6 +699,11 @@ class Raster(object):
                               buffer=self._wkb, offset=start+skip,
                               dtype=np.dtype(dtype)
                               )
+            if hasNodataValue:
+                mask = data == nodata
+            else:
+                mask = False
+            data = ma.array(data, mask=mask)
 
         return data
 
@@ -758,6 +774,12 @@ class Raster(object):
                       'lanczos': Image.LANCZOS}[algorithm.lower()]
             im_result = im.resize((width,height), method)
             arr_result = np.array(im_result)
+
+            if bandhead['hasNodataValue']:
+                # also resize mask and write nodatavals into resulting array
+                mask_im = Image.fromarray(arr.mask)
+                mask_result = mask_im.resize((width,height), Image.NEAREST)
+                arr_result[mask_result] = bandhead['nodata']
                 
             # byteswap
             #if endianFmt != arr_result.dtype.byteorder:
@@ -859,7 +881,7 @@ class Raster(object):
             extenttype = args[5] if len(args) >= 6 else 'intersection'
             nodata1expr = args[6] if len(args) >= 7 else None
             nodata2expr = args[7] if len(args) >= 8 else None
-            nodatanodataexpr = args[8] if len(args) >= 9 else None
+            nodatanodataval = args[8] if len(args) >= 9 else 0 # default to 0? 
             mode = 'multi'
             
         elif isinstance(args[0], Raster) and isinstance(args[1], basestring):
@@ -870,7 +892,7 @@ class Raster(object):
             extenttype = args[3] if len(args) >= 4 else 'intersection'
             nodata1expr = args[4] if len(args) >= 5 else None
             nodata2expr = args[5] if len(args) >= 6 else None
-            nodatanodataexpr = args[6] if len(args) >= 7 else None
+            nodatanodataval = args[6] if len(args) >= 7 else 0 # default to 0? 
             mode = 'multi'
             
         else:
@@ -889,6 +911,7 @@ class Raster(object):
             header['endian'] = 1 if header['endian'] == '<' else 0
             header['numbands'] = 1
             if nodataval != None:
+                header['hasNodataValue'] = True
                 header['nodataval'] = nodataval
             headervals = [header[k] for k in 'version,numbands,scaleX,scaleY,ipX,ipY,skewX,skewY,srid,width,height'.split(',')]
             wkb += pack('<b', header['endian'])
@@ -944,7 +967,7 @@ class Raster(object):
                 
                 whens = whenpart.split(' when ')
                 when_cumul = np.zeros(arr.shape, dtype=bool)
-                arr_result = np.array(arr)
+                arr_result = arr.copy()
                 for when in whens:
                     when,then = when.split(' then ')
 
@@ -1021,10 +1044,20 @@ class Raster(object):
             if extenttype == 'first':
                 ipX,ipY = self.upperLeftX,self.upperLeftY
                 width,height = self.width,self.height
+                # unless specified, first will only include pixels where rast1 is valid
+                if not nodata1expr:
+                    nodata1expr = str(nodatanodataval)
+                if not nodata2expr:
+                    nodata2expr = '[rast1]'
                 
             elif extenttype == 'second':
                 ipX,ipY = rast2.upperLeftX,rast2.upperLeftY
                 width,height = rast2.width,rast2.height
+                # unless specified, second will only include pixels where rast2 is valid
+                if not nodata1expr:
+                    nodata1expr = '[rast2]'
+                if not nodata2expr:
+                    nodata2expr = str(nodatanodataval)
                 
             elif extenttype == 'intersection':
                 # get intersection of coord bboxes
@@ -1036,7 +1069,7 @@ class Raster(object):
                     # if empty result, ie no intersection
                     # return None?
                     # or return zero width/height raster? 
-                    raise NotImplemented
+                    return None
                 # calculate rast1 pixel positions for the intersected bbox
                 xmin,ymin,xmax,ymax = box.bbox()
                 corners = [(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin)]
@@ -1047,8 +1080,14 @@ class Raster(object):
                 ipX,ipY = xmin,ymin # TODO: what about y flipping?
                 width = pxmax-pxmin
                 height = pymax-pymin
+                # unless specified, intersection will not include pixels where only one raster is valid
+                if not nodata1expr:
+                    nodata1expr = str(nodatanodataval)
+                if not nodata2expr:
+                    nodata2expr = str(nodatanodataval)
                 
             elif extenttype == 'union':
+                # get union of coord bboxes
                 box1 = self.box2d()
                 box2 = rast2.box2d()
                 box = box1.union(box2)
@@ -1062,7 +1101,11 @@ class Raster(object):
                 ipX,ipY = xmin,ymin # TODO: what about y flipping?
                 width = pxmax-pxmin
                 height = pymax-pymin
-                #print ipX,ipY,width,height
+                # unless specified, union will include pixels where any of the rasters are valid
+                if not nodata1expr:
+                    nodata1expr = '[rast2]'
+                if not nodata2expr:
+                    nodata2expr = '[rast1]'
 
             width,height = int(width),int(height)
             
@@ -1083,6 +1126,8 @@ class Raster(object):
             # get and update band headers
             bandhead = self._band_header(nband1)
             bandhead['isOffline'] = False
+            bandhead['hasNodataValue'] = True
+            bandhead['nodata'] = nodatanodataval
             dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
                       'u2', 'i4', 'u4', 'f4', 'f8']
             if pixeltype:
@@ -1096,7 +1141,7 @@ class Raster(object):
 
             # create raster for new extent
             frame = make_empty_raster(width, height, ipX, ipY, self.scaleX, self.scaleY, self.skewX, self.skewY)
-            frame_result = np.zeros((height,width), dtype=pixeltype)
+            frame_result = np.ones((height,width), dtype=pixeltype) * nodatanodataval # prefilled with nodatanodataval
             frame_result = Image.fromarray(frame_result)
 
             # reframe array 1
@@ -1104,9 +1149,24 @@ class Raster(object):
             arr1 = arr1.astype(np.dtype(pixeltype))
             ulX,ulY = self.raster_to_world_coord(0, 0).as_GeoJSON()['coordinates']
             startX1,startY1 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
-            # im paste
+            # calc nodata2 value
             #print 'arr1 pixel bounds',startX1,startY1, startX1+self.width, startY1+self.height
-            frame_result.paste(Image.fromarray(arr1), (int(startX1),int(startY1)))
+            pyexpr = nodata2expr.lower()
+            pyexpr = pyexpr.replace('[rast1]','rast1')
+            locenv = {'rast1': arr1}
+            nodata2_result = eval(pyexpr, {}, locenv)
+            if isinstance(nodata2_result, (float,int)):
+                # constant
+                arr1_paste = np.ones(arr1.shape, dtype=arr1.dtype) * nodata2_result
+            else:
+                # array
+                arr1_paste = nodata2_result
+            # im paste
+            if arr1.mask is False:
+                frame_result.paste(Image.fromarray(arr1_paste), (int(startX1),int(startY1)))
+            else:
+                maskim1 = Image.fromarray((~arr1.mask).astype('u1')*255, mode='L')
+                frame_result.paste(Image.fromarray(arr1_paste), (int(startX1),int(startY1)), mask=maskim1)
             # array paste
             #arr1dum = np.zeros((height,width), dtype=bool)
             #arr1dum[int(startY1):int(startY1+self.height), int(startX1):int(startX1+self.width)] = True
@@ -1120,9 +1180,24 @@ class Raster(object):
             arr2 = arr2.astype(np.dtype(pixeltype))
             ulX,ulY = rast2.raster_to_world_coord(0, 0).as_GeoJSON()['coordinates']
             startX2,startY2 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
-            # im paste
+            # calc nodata1 value
             #print 'arr2 pixel bounds',startX2,startY2, startX2+rast2.width, startY2+rast2.height
-            frame_result.paste(Image.fromarray(arr2), (int(startX2),int(startY2)))
+            pyexpr = nodata1expr.lower()
+            pyexpr = pyexpr.replace('[rast2]','rast2')
+            locenv = {'rast2': arr2}
+            nodata1_result = eval(pyexpr, {}, locenv)
+            if isinstance(nodata1_result, (float,int)):
+                # constant
+                arr2_paste = np.ones(arr2.shape, dtype=arr2.dtype) * nodata1_result
+            else:
+                # array
+                arr2_paste = nodata1_result
+            # im paste
+            if arr2.mask is False:
+                frame_result.paste(Image.fromarray(arr2_paste), (int(startX2),int(startY2)))
+            else:
+                maskim2 = Image.fromarray((~arr2.mask).astype('u1')*255, mode='L') # invert mask for PIL
+                frame_result.paste(Image.fromarray(arr2_paste), (int(startX2),int(startY2)), mask=maskim2)
             # array paste
             #arr2dum = np.zeros((height,width), dtype=bool)
             #arr2dum[int(startY2):int(startY2+rast2.height), int(startX2):int(startX2+rast2.width)] = True
@@ -1143,12 +1218,13 @@ class Raster(object):
             xmin,ymin = frame.raster_to_world_coord(startX,startY).as_GeoJSON()['coordinates']
             xmax,ymax = frame.raster_to_world_coord(endX,endY).as_GeoJSON()['coordinates']
 
-            # only run expression if there is any intersection
+            # expression is only for the pixels that intersect
+            # threefore only run expression if the two rasters overlap in the common grid
             #frameisec = arr1dum & arr2dum
             if (endX-startX) > 0 and (endY-startY) > 0:
                 #print 'isec pixel bounds', startX, startY, endX, endY
 
-                # clip arr1 to intersecting parts
+                # clip arr1 to intersecting region
                 pxmin1,pymin1 = self.world_to_raster_coord(xmin,ymin).as_GeoJSON()['coordinates']
                 pxmax1,pymax1 = self.world_to_raster_coord(xmax,ymax).as_GeoJSON()['coordinates']
                 pxmin1,pymin1,pxmax1,pymax1 = max(pxmin1,0),max(pymin1,0),min(pxmax1,self.width),min(pymax1,self.height)
@@ -1156,13 +1232,20 @@ class Raster(object):
                 #print 'arr1 subset',pxmin1,pymin1,pxmax1,pymax1
                 arr1clip = arr1[pymin1:pymax1, pxmin1:pxmax1]
 
-                # clip arr2 to intersecting parts
+                # clip arr2 to intersecting region
                 pxmin2,pymin2 = rast2.world_to_raster_coord(xmin,ymin).as_GeoJSON()['coordinates']
                 pxmax2,pymax2 = rast2.world_to_raster_coord(xmax,ymax).as_GeoJSON()['coordinates']
                 pxmin2,pymin2,pxmax2,pymax2 = max(pxmin2,0),max(pymin2,0),min(pxmax2,self.width),min(pymax2,self.height)
                 pxmin2,pymin2,pxmax2,pymax2 = map(int, [pxmin2,pymin2,pxmax2,pymax2])
                 #print 'arr2 subset',pxmin2,pymin2,pxmax2,pymax2
                 arr2clip = arr2[pymin2:pymax2, pxmin2:pxmax2]
+
+                # determine intersecting pixels mask
+                isec_mask = np.zeros(arr1clip.shape, dtype=bool)
+                if arr1clip.mask is not False:
+                    isec_mask = isec_mask | arr1clip.mask
+                if arr2clip.mask is not False:
+                    isec_mask = isec_mask | arr2clip.mask
 
                 # set environment
                 #print 'isec dims',arr1clip.shape,arr2clip.shape
@@ -1203,9 +1286,13 @@ class Raster(object):
                     
                     whens = whenpart.split(' when ')
                     when_cumul = np.zeros(arr1clip.shape, dtype=bool)
-                    isec_result = np.zeros(arr1clip.shape, dtype=pixeltype)
+
+                    # isect result starts out as fully masked array of nodatanodataval
+                    isec_result = ma.array(np.ones(arr1clip.shape, dtype=pixeltype) * nodatanodataval, mask=isec_mask)
+                    
                     #when_cumul = np.zeros((height,width), dtype=bool)
                     #arr_result = np.zeros((height,width), dtype=pixeltype)
+                    
                     for when in whens:
                         when,then = when.split(' then ')
 
@@ -1238,16 +1325,25 @@ class Raster(object):
                 else:
                     # simple expression
                     pyexpr = sql2py(expression)
-                    isec_result = eval(pyexpr, {}, locenv)
+                    isec_calc = eval(pyexpr, {}, locenv)
+                    if isinstance(isec_calc, (float,int)):
+                        # constant
+                        isec_arr = np.ones(arr1clip.shape, dtype=arr1.dtype) * isec_calc
+                    else:
+                        # array
+                        isec_arr = isec_calc
+                    isec_result = ma.array(isec_arr, mask=isec_mask)
 
-                # paste expression results onto the intersecting region
+                # paste final expression results onto the intersecting region
                 #frame_result[frameisec] = isec_result
-                frame_result.paste(Image.fromarray(isec_result), (int(startX),int(startY)))
+                maskim = Image.fromarray((~isec_mask).astype('u1')*255, mode='L') # invert mask for PIL
+                frame_result.paste(Image.fromarray(isec_result), (int(startX),int(startY)), mask=maskim)
 
-            # TODO: handle nodatavals
+
+            # TODO: special handling if nodata1expr or nodata2expr specified
             # ...
 
-            frame_result = np.array(frame_result)
+            frame_result = np.array(frame_result) # nodata is already encoded in the image/array
                     
             # byteswap
             #if endianFmt != arr_result.dtype.byteorder:
@@ -1278,7 +1374,7 @@ class Raster(object):
         # falls on any corner of the grid of the other raster
 
         # check that have the same params
-        for param in 'scaleX scaleY skewX skewY srid'.split(' '):
+        for param in 'scaleX scaleY skewX skewY'.split(' '): # TODO: also same srid?
             if self._header[param] != rastB._header[param]:
                 return False
 
@@ -1298,17 +1394,45 @@ class Raster(object):
         # coorner coordinates do not match up
         return False
 
-    def intersects(self, rastB):
+    def intersects(self, *args):
         # for now only allow the simple raster-to-raster intersects
+
+        # parse args
+        if len(args) == 3:
+            nbandA,rastB,nbandB = args
+            mode = 'nodata'
+        elif len(args) == 1:
+            rastB = args[0]
+            mode = 'convex'
+        else:
+            raise Exception('Invalid function args: {}'.format(args))
+
+        # load headers
         if not self._header:
             self._load_header()
         if not rastB._header:
             rastB._load_header()
 
-        hullA = self.convex_hull()
-        hullB = rastB.convex_hull()
+        # test
+        if mode == 'convex':
+            hullA = self.convex_hull()
+            hullB = rastB.convex_hull()
+            intersects = hullA.intersects(hullB)
 
-        return hullA.intersects(hullB)
+        elif mode == 'nodata':
+            hullA = self.convex_hull()
+            hullB = rastB.convex_hull()
+            maybe = hullA.intersects(hullB)
+            if maybe:
+                expr = '1'
+                pixeltype = None
+                # nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
+                overlay = self.mapalgebra(nbandA, rastB, nbandB, expr, pixeltype, 'intersection')
+                intersects = overlay # TODO: how check result? 
+            else:
+                intersects = False
+
+        return intersects
 
 
 ##    def add_band(self, *args, **kwargs):

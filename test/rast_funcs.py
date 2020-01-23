@@ -245,7 +245,13 @@ for row in cur.execute('''select rast from test'''):
 
 # map algebra, multi
 print 'map algebra, multi'
-for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as t2 limit 3 offset 1"):
+for rast1,rast2 in cur.execute('''with cross as (select t1.rast as rast, st_setUpperLeft(t2.rast,st_upperleftx(t2.rast)*0.75,st_upperlefty(t2.rast)*0.75) as shift
+                                                    from test as t1, test as t2
+                                                    where t1.rast != t2.rast)
+                                  select rast as "[rast]", shift as "[rast]"
+                                  from cross
+                                  where st_intersects(rast,shift)
+                                  limit 2'''):
     print 1, rast1.summarystats()
     print 2, rast2.summarystats()
     
@@ -253,6 +259,7 @@ for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as 
     result = rast1.mapalgebra(rast2, '([rast1] + [rast2]) / 2.0',
                               None, 'union')
     print result.summarystats()
+    Image.fromarray(result.data()).show()
     
     #print 'dummy coding?'
     #result = rast.mapalgebra(1, 'f4', '[rast] = 255')
@@ -262,7 +269,7 @@ for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as 
     result = rast.mapalgebra(rast2, 'case when [rast1] > [rast2] then 255 when [rast1] < [rast2] then 1 else 127 end',
                              None, 'union')
     print result.summarystats()
-    #Image.fromarray(result.data()).show()
+    Image.fromarray(result.data()).show()
 
     #print 'between'
     #result = rast.mapalgebra(rast2 'case when [rast1] = 0 then 0 when [rast1] between 1 and 100 then 1 when [rast1] between 101 and 200 then 2 else 99 end')
@@ -276,7 +283,7 @@ for rast1,rast2 in cur.execute("""with cross as (select t1.rast as rast, st_setU
                                   select rast as "[rast]", shift as "[rast]"
                                   from cross
                                   where st_intersects(rast,shift)
-                                  limit 3
+                                  limit 2
                                     """):
     print rast1.bbox(),rast2.bbox(),rast1.intersects(rast2)
     isec = rast1.intersection(rast2, 'band1')
@@ -295,19 +302,21 @@ for buff,rast in cur.execute('''
                                         rast
                                 from test
                                 where st_distance(st_Buffer(st_Point(2000,2000), 500), st_Envelope(rast)) = 0
-                                limit 3
+                                limit 1
                                 '''):
     print buff.bbox(),rast.bbox()
     rasterized = buff.as_raster(rast, 'u1', 255)
-    intersected = rasterized.mapalgebra(rast,'max([rast1],[rast2])') #intersection(rast, 'band2')
+    intersected = rasterized.intersection(rast, 'band2') #mapalgebra(rast,'max([rast1],[rast2])') #intersection(rast, 'band2')
     
-    #arr = rasterized.data(1)
+    arr = rasterized.data(1)
     #from PIL import Image
     #Image.fromarray(arr).show()
     
     arr = intersected.data(1)
     from PIL import Image
     Image.fromarray(arr).show()
+
+
 
 
 # union aggregate
@@ -334,7 +343,7 @@ rast = postqlite.raster.raster.Raster(agg.finalize())
 # view
 print rast.metadata()
 print rast.summarystats()
-#Image.fromarray(rast.data(1)).show()
+Image.fromarray(rast.data(1)).show()
 
 
 
