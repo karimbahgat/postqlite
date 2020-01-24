@@ -17,10 +17,11 @@ from wkb_raster import write_wkb_raster
 # TODOs:
 # 1 (DONE): Honor nodata values throughout using np.ma arrays if rast has nodata ('hasNodataValue'), incl summarystats, mapalgebra, intersection, etc
 # 2 (DONE): All vector and raster funcs and aggs must be moved to a separate 'register.py' module
-# with separate functions for each that detects vector vs raster and calls the corresponding func/agg
+# ... with separate functions for each that detects vector vs raster and calls the corresponding func/agg
 # 3 (DONE): Add geometry burning function, asRaster() using basic PIL drawing
 # 4: Figure out correct wkb handling (keep it as sqlite's read-write buffer? does that change the underlaying db data? how to create own read-write buffer?)
 # 5: Make an interactive tk app for writing sql directly
+# 6: Fix geometry asRaster() extent direction bug...
 # ... 
 
 def register_funcs(conn):
@@ -76,7 +77,14 @@ def register_funcs(conn):
     #conn.create_function('rt_PixelAsCentroid', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
 
     # stats
-    conn.create_function('rt_SummaryStats', 2, lambda wkb,band: json.dumps(Raster(wkb).summarystats(band)) if wkb else None)
+    def summarystats(*args):
+        if not args[0]:
+            return None
+        args = list(args)
+        rast = Raster(args.pop(0))
+        stats = rast.summarystats(*args)
+        return json.dumps(stats)
+    conn.create_function('rt_SummaryStats', -1, summarystats)
 
     # changing
     conn.create_function('rt_Resize', -1, lambda *args: Raster(args[0]).resize(*args[1:]).dump_wkb() if args[0] else None)
@@ -97,6 +105,7 @@ def register_funcs(conn):
 def register_aggs(conn):
     conn.create_aggregate('rt_SameAlignment', 1, RT_SameAlignment)
     conn.create_aggregate('rt_Union', -1, RT_Union)
+    conn.create_aggregate('rt_SummaryStatsAgg', -1, RT_SummaryStatsAgg)
 
 
 # classes
@@ -123,6 +132,57 @@ class RT_SameAlignment(object):
     def finalize(self):
         success = not self.failed
         return success
+
+class RT_SummaryStatsAgg(object):
+    def __init__(self):
+        self.result = None
+
+    def step(self, *args):
+        if args[0] is None:
+            return
+
+        rast = Raster(args[0])
+
+        # parse args
+        if len(args) >= 2:
+            if isinstance(args[1], bool):
+                # rast, boolean exclude_nodata_value
+                exclude_nodata_value = args[1]
+                nband = args[2] if len(args) >= 3 else 1
+            elif isinstance(args[1], int):
+                # rast, integer nband, boolean exclude_nodata_value
+                nband = args[1]
+                exclude_nodata_value = args[2] if len(args) >= 3 else True
+            else:
+                raise Exception('Invalid function args: {}'.format(args))
+        else:
+            nband = 1
+            exclude_nodata_value = True
+
+        # calc stats
+        stats = rast.summarystats(nband, exclude_nodata_value)
+
+        # update results
+        if self.result:
+            self.result['sum'] += stats['sum']
+            self.result['count'] += stats['count']
+            self.result['min'] = min(self.result['min'], stats['min'])
+            self.result['max'] = max(self.result['max'], stats['max'])
+            # what about stdev...? 
+            # ... 
+
+        else:
+            self.result = stats
+
+    def finalize(self):
+        # make final calc
+        self.result['mean'] = self.result['sum'] / float(self.result['count'])
+        # what about stdev...?
+        # ...
+        self.result.pop('stddev')
+        # dump to string (only used within the db)
+        dictstr = json.dumps(self.result)
+        return dictstr
 
 class RT_Union(object):
     # NOTE: currently only unions one band, whereas postgis does all if not specified
@@ -707,10 +767,28 @@ class Raster(object):
 
         return data
 
-    def summarystats(self, band=1):
+    def summarystats(self, *args):
         # should return: count | sum  |    mean    |  stddev   | min | max
-        arr = self.data(band)
-        stats = {'count': arr.shape[0]*arr.shape[1],
+
+        # parse args
+        if len(args) >= 0:
+            if isinstance(args[0], bool):
+                # boolean exclude_nodata_value
+                exclude_nodata_value = args[0]
+                nband = 1
+            elif isinstance(args[0], int):
+                # integer nband, boolean exclude_nodata_value
+                nband = args[0]
+                exclude_nodata_value = args[1] if len(args) == 2 else True
+        else:
+            nband = 1
+            exclude_nodata_value = True
+
+        # get stats
+        arr = self.data(nband)
+        if exclude_nodata_value is False:
+            arr = np.array(arr) # full array without mask
+        stats = {'count': int(arr.count()),
                  'sum': float(arr.sum()),
                  'mean': float(arr.mean()),
                  'stddev': float(np.std(arr)),
