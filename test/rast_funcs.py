@@ -345,6 +345,12 @@ print rast.metadata()
 print rast.summarystats()
 Image.fromarray(rast.data(1)).show()
 
+rastclip = rast.clip(buff, False) # no crop
+Image.fromarray(rastclip.data(1)).show()
+
+rastclip = rast.clip(buff) # crop
+Image.fromarray(rastclip.data(1)).show()
+
 
 
 

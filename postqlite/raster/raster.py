@@ -93,7 +93,15 @@ def register_funcs(conn):
     #conn.create_function('rt_Transform', 2, lambda wkb,crs: Raster(wkb).transform(crs).dump_wkb() if wkb else None)
 
     # interacting
-    #conn.create_function('rt_Clip', 2, lambda wkb,geomwkb: Raster(wkb).clip(Geometry(geomwkb)).dump_wkb() if wkb and geomwkb else None)
+    def clip(*args):
+        wkb = args[0]
+        if wkb is None:
+            return None
+        rast = Raster(wkb)
+        clipped = rast.clip(*args[1:])
+        if clipped:
+            return clipped.dump_wkb()
+    conn.create_function('rt_Clip', -1, clip)
     conn.create_function('rt_Intersection', -1, lambda *args: Raster(args[0]).intersection(Raster(*args[1:])).dump_wkb() if args[0] else None)
     conn.create_function('rt_MapAlgebra', -1, lambda *args: Raster(args[0]).mapalgebra(*args[1:]).dump_wkb() if args[0] else None)
 
@@ -232,7 +240,7 @@ class RT_Union(object):
             # mean
             # count
             # range
-            self.result = self.result.mapalgebra(nband, rast, nband, expr, None, 'union')
+            self.result = self.result.mapalgebra(nband, rast, nband, expr, None, 'union', '[rast2]', '[rast1]')
             
         else:
             # first one
@@ -771,7 +779,7 @@ class Raster(object):
         # should return: count | sum  |    mean    |  stddev   | min | max
 
         # parse args
-        if len(args) >= 0:
+        if len(args) >= 1:
             if isinstance(args[0], bool):
                 # boolean exclude_nodata_value
                 exclude_nodata_value = args[0]
@@ -1098,19 +1106,19 @@ class Raster(object):
                 ipX,ipY = self.upperLeftX,self.upperLeftY
                 width,height = self.width,self.height
                 # unless specified, first will only include pixels where rast1 is valid
-                if not nodata1expr:
-                    nodata1expr = str(nodatanodataval)
-                if not nodata2expr:
-                    nodata2expr = '[rast1]'
+##                if not nodata1expr:
+##                    nodata1expr = str(nodatanodataval)
+##                if not nodata2expr:
+##                    nodata2expr = '[rast1]'
                 
             elif extenttype == 'second':
                 ipX,ipY = rast2.upperLeftX,rast2.upperLeftY
                 width,height = rast2.width,rast2.height
                 # unless specified, second will only include pixels where rast2 is valid
-                if not nodata1expr:
-                    nodata1expr = '[rast2]'
-                if not nodata2expr:
-                    nodata2expr = str(nodatanodataval)
+##                if not nodata1expr:
+##                    nodata1expr = '[rast2]'
+##                if not nodata2expr:
+##                    nodata2expr = str(nodatanodataval)
                 
             elif extenttype == 'intersection':
                 # get intersection of coord bboxes
@@ -1136,10 +1144,10 @@ class Raster(object):
                 width = pxmax-pxmin
                 height = pymax-pymin
                 # unless specified, intersection will not include pixels where only one raster is valid
-                if not nodata1expr:
-                    nodata1expr = str(nodatanodataval)
-                if not nodata2expr:
-                    nodata2expr = str(nodatanodataval)
+##                if not nodata1expr:
+##                    nodata1expr = str(nodatanodataval)
+##                if not nodata2expr:
+##                    nodata2expr = str(nodatanodataval)
                 
             elif extenttype == 'union':
                 # get union of coord bboxes
@@ -1159,10 +1167,10 @@ class Raster(object):
                 width = pxmax-pxmin
                 height = pymax-pymin
                 # unless specified, union will include pixels where any of the rasters are valid
-                if not nodata1expr:
-                    nodata1expr = '[rast2]'
-                if not nodata2expr:
-                    nodata2expr = '[rast1]'
+##                if not nodata1expr:
+##                    nodata1expr = '[rast2]'
+##                if not nodata2expr:
+##                    nodata2expr = '[rast1]'
 
             width,height = int(width),int(height)
             
@@ -1199,7 +1207,7 @@ class Raster(object):
             # create raster for new extent
             frame = make_empty_raster(width, height, ipX, ipY, self.scaleX, self.scaleY, self.skewX, self.skewY)
             frame_result = np.ones((height,width), dtype=pixeltype) * nodatanodataval # prefilled with nodatanodataval
-            frame_result = Image.fromarray(frame_result)
+            frame_result = Image.fromarray(frame_result.astype(pixeltype))
 
             # reframe array 1
             arr1 = self.data(nband1)
@@ -1208,22 +1216,24 @@ class Raster(object):
             startX1,startY1 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
             # calc nodata2 value
             #print 'arr1 pixel bounds',startX1,startY1, startX1+self.width, startY1+self.height
-            pyexpr = nodata2expr.lower()
-            pyexpr = pyexpr.replace('[rast1]','rast1')
-            locenv = {'rast1': arr1}
-            nodata2_result = eval(pyexpr, {}, locenv)
-            if isinstance(nodata2_result, (float,int)):
-                # constant
-                arr1_paste = np.ones(arr1.shape, dtype=arr1.dtype) * nodata2_result
-            else:
-                # array
-                arr1_paste = nodata2_result
-            # im paste
-            if arr1.mask is False:
-                frame_result.paste(Image.fromarray(arr1_paste), (int(startX1),int(startY1)))
-            else:
-                maskim1 = Image.fromarray((~arr1.mask).astype('u1')*255, mode='L')
-                frame_result.paste(Image.fromarray(arr1_paste), (int(startX1),int(startY1)), mask=maskim1)
+            if nodata2expr:
+                pyexpr = nodata2expr.lower()
+                pyexpr = pyexpr.replace('[rast1]','rast1')
+                locenv = {'rast1': arr1}
+                nodata2_result = eval(pyexpr, {}, locenv)
+                if isinstance(nodata2_result, (float,int)):
+                    # constant
+                    arr1_paste = np.ones(arr1.shape, dtype=arr1.dtype) * nodata2_result
+                else:
+                    # array
+                    arr1_paste = nodata2_result
+                arr1_paste = arr1_paste.astype(pixeltype)
+                # im paste
+                if arr1.mask is False:
+                    frame_result.paste(Image.fromarray(arr1_paste), (int(startX1),int(startY1)))
+                else:
+                    maskim1 = Image.fromarray((~arr1.mask).astype('u1')*255, mode='L')
+                    frame_result.paste(Image.fromarray(arr1_paste), (int(startX1),int(startY1)), mask=maskim1)
             # array paste
             #arr1dum = np.zeros((height,width), dtype=bool)
             #arr1dum[int(startY1):int(startY1+self.height), int(startX1):int(startX1+self.width)] = True
@@ -1239,22 +1249,24 @@ class Raster(object):
             startX2,startY2 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
             # calc nodata1 value
             #print 'arr2 pixel bounds',startX2,startY2, startX2+rast2.width, startY2+rast2.height
-            pyexpr = nodata1expr.lower()
-            pyexpr = pyexpr.replace('[rast2]','rast2')
-            locenv = {'rast2': arr2}
-            nodata1_result = eval(pyexpr, {}, locenv)
-            if isinstance(nodata1_result, (float,int)):
-                # constant
-                arr2_paste = np.ones(arr2.shape, dtype=arr2.dtype) * nodata1_result
-            else:
-                # array
-                arr2_paste = nodata1_result
-            # im paste
-            if arr2.mask is False:
-                frame_result.paste(Image.fromarray(arr2_paste), (int(startX2),int(startY2)))
-            else:
-                maskim2 = Image.fromarray((~arr2.mask).astype('u1')*255, mode='L') # invert mask for PIL
-                frame_result.paste(Image.fromarray(arr2_paste), (int(startX2),int(startY2)), mask=maskim2)
+            if nodata1expr:
+                pyexpr = nodata1expr.lower()
+                pyexpr = pyexpr.replace('[rast2]','rast2')
+                locenv = {'rast2': arr2}
+                nodata1_result = eval(pyexpr, {}, locenv)
+                if isinstance(nodata1_result, (float,int)):
+                    # constant
+                    arr2_paste = np.ones(arr2.shape, dtype=arr2.dtype) * nodata1_result
+                else:
+                    # array
+                    arr2_paste = nodata1_result
+                arr2_paste = arr2_paste.astype(pixeltype)
+                # im paste
+                if arr2.mask is False:
+                    frame_result.paste(Image.fromarray(arr2_paste), (int(startX2),int(startY2)))
+                else:
+                    maskim2 = Image.fromarray((~arr2.mask).astype('u1')*255, mode='L') # invert mask for PIL
+                    frame_result.paste(Image.fromarray(arr2_paste), (int(startX2),int(startY2)), mask=maskim2)
             # array paste
             #arr2dum = np.zeros((height,width), dtype=bool)
             #arr2dum[int(startY2):int(startY2+rast2.height), int(startX2):int(startX2+rast2.width)] = True
@@ -1466,6 +1478,119 @@ class Raster(object):
         result = self.mapalgebra(band1, rast2, band2, expr, pixeltype, 'intersection')
         return result
 
+    def clip(self, *args):
+        '''
+        Variant 1:
+            integer nband, geometry geom, [double precision nodataval, boolean crop=TRUE]
+        Variant 2:
+            integer nband, geometry geom, [boolean crop]
+        Variant 3:
+            geometry geom, [double precision nodataval, boolean crop=TRUE]
+        Variant 4:
+            geometry geom, [boolean crop=TRUE]
+        '''
+        # NOTE: in postgis, all bands are included in result if none specified
+        # ...for now we just only clip one band (default is band 1)
+        # TODO: sort of works, but have to check more thouroughly...
+        # ........
+        if not self._header:
+            self._load_header()
+            
+        # parse args
+        assert len(args) >= 1
+        if isinstance(args[0], int):
+            nband = args[0]
+            if isinstance(args[1], Geometry):
+                geom = args[1]
+            else:
+                wkb = args[1]
+                geom = Geometry(wkb)
+                
+            if len(args) >= 3:
+                if isinstance(args[2], float):
+                    # integer nband, geometry geom, double precision nodataval, boolean crop=TRUE
+                    nodataval = args[2]
+                    crop = args[3] if len(args) >= 4 else True
+                elif isinstance(args[2], (int,bool)):
+                    # integer nband, geometry geom, boolean crop
+                    crop = args[2] if len(args) >= 3 else True
+                    nodataval = None
+                else:
+                    raise Exception('Invalid function args: {}'.format(args))
+        else:
+            if isinstance(args[0], Geometry):
+                geom = args[0]
+            else:
+                wkb = args[0]
+                geom = Geometry(wkb)
+                
+            nband = 1 # assume one, but should actually be ALL
+            if len(args) >= 2:
+                if isinstance(args[1], float):
+                    # geometry geom, double precision nodataval, boolean crop=TRUE
+                    nodataval = args[1]
+                    crop = args[2] if len(args) >= 3 else True
+                elif isinstance(args[1], (int,bool)):
+                    # geometry geom, boolean crop=TRUE
+                    crop = args[1] if len(args) >= 2 else True
+                    nodataval = None
+                else:
+                    raise Exception('Invalid function args: {}'.format(args))
+            else:
+                nodataval = None
+                crop = True
+
+        # quit early?
+        if geom is None:
+            return None
+        if not geom.intersects(self.envelope()):
+            return None
+
+        # determine nodataval
+        if nodataval is None:
+            nodataval = self.nodataval(nband)
+        if nodataval is None:
+            # should be set to ST_MinPossibleValue(ST_BandPixelType(rast, band))
+            raise Exception('nodataval must be set')
+
+        # rasterize the geom to be used as the clipper
+        if crop:
+            # only need to rasterize within the intersection of rast and geom
+            # NOTE: for now just rasterize entire geom, will be clipped correctly in next step
+            # scalex, scaley, pixeltype, [value=1, nodataval=0, upperleftx=NULL, upperlefty=NULL, skewx=0, skewy=0]
+            georast = geom.as_raster(self.scaleX, self.scaleY, 'u1',
+                                     255, None, # value,nodata
+                                     self.upperLeftX, self.upperLeftY, # to ensure alignment? 
+                                     self.skewX, self.skewY,
+                                     )
+
+        else:
+            # only need to rasterize within the extent of rast
+            # refraster, pixeltype, [value=1, nodataval=0]
+            ref = self
+            georast = geom.as_raster(ref, 'u1', 255)
+
+        #Image.fromarray(georast.data()).show()
+
+        # clip the raster using intersection/mapalgebra
+        if crop:
+            # crop to the intersection of rast and geom
+            # band1, rast2, band2, [nodataval=NULL]
+            clipped = self.intersection(nband, georast, 1, nodataval)
+##            clipped = self.mapalgebra(nband, georast, 1, '[rast1]',
+##                                      None, 'intersection',
+##                                      None, None, nodataval)
+
+        else:
+            # gets same extent as rast
+            # nband1, rast2, nband2, expression, [text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL]
+            print 'nd',georast.nodataval(1)
+            clipped = self.mapalgebra(nband, georast, 1, '[rast1]',
+                                      None, 'first')
+                                      #None, 'first',
+                                      #str(nodataval), str(nodataval), nodataval)
+
+        return clipped
 
 
     ############

@@ -57,17 +57,49 @@ print 'countries', cur.execute('select count(oid) from countries').fetchone()
 
 
 # country previews
-for name,rast in cur.execute('''select name,st_asRaster(geom,0.1,-0.1,'u1',255) as "[rast]" from countries where geom is not null limit 1'''):
-    print name,rast
-    arr = rast.data(1)
-    Image.fromarray(arr).show()
+##for name,rast in cur.execute('''select name,st_asRaster(geom,0.1,-0.1,'u1',255) as "[rast]" from countries where geom is not null limit 1'''):
+##    print name,rast
+##    arr = rast.data(1)
+##    Image.fromarray(arr).show()
 
 
 
 
 
-# map tiles intersected with countries
-print 'country map intersections'
+# map tiles clipped to countries
+print 'country map clipping'
+##for row in cur.execute('''
+##                        select name,rt_union("rast")
+##                        from (
+##                            select name, rt_Clip(rast, geom, 0.0, 1) as "rast [rast]"
+##                            from maps,countries
+##                            where geom is not null and st_intersects(geom, rt_envelope(rast))
+##                            )
+##                        group by name
+##                        '''):
+##    print row
+##    name,clipunion = row
+##    Image.fromarray(clipunion.data(1)).show()
+##
+##fdsafas
+
+for row in cur.execute('''
+                    select name, rt_Clip(rast, geom, 0.0, 1) as "[rast]", rt_Clip(rast, geom, 0.0, 0) as "[rast]", geom, rast
+                    from maps,countries
+                    where geom is not null and st_intersects(geom, rt_envelope(rast))
+                    limit 3
+                        '''):
+    print row
+    name,clip,clip_nocrop,geom,rast = row
+    Image.fromarray(rast.data(1)).show()
+    Image.fromarray(clip.data(1)).show()
+    Image.fromarray(clip_nocrop.data(1)).show()
+
+
+fdsafdsa
+
+
+# play with map algebra...
 ##for row in cur.execute('''
 ##                    select name,st_rasterunion( rast ) as "[rast]"
 ##                    from (

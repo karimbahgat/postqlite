@@ -369,7 +369,7 @@ class Geometry(object):
         '''
         Group 1:
             Variant 1:
-                width, height, pixeltype, [value=1, nodataval=0, upperleftx=NULL, upperlefty=NULL, skewx=0, skewy=0]
+                refraster, pixeltype, [value=1, nodataval=0]
         Group 2:
             Variant 2:
                 ...
@@ -384,6 +384,15 @@ class Geometry(object):
         from ..raster.raster import Raster, make_empty_raster
 
         # parse args
+        def getarg(args, pos, default):
+            if len(args) >= (pos+1):
+                val = args[pos]
+                if val is None:
+                    val = default
+            else:
+                val = default
+            return val
+            
         # GROUP 1: existing raster
         if not isinstance(args[0], (float,int)):
             # raster ref, text pixeltype, double precision value=1, double precision nodataval=0, boolean touched=false
@@ -392,8 +401,9 @@ class Geometry(object):
             else:
                 ref = Raster(args[0])
             pixeltype = args[1]
-            value = args[2] if len(args) >= 3 else 1
-            nodataval = args[3] if len(args) >= 4 else 0
+            value = getarg(args, 2, 1) 
+            nodataval = getarg(args, 3, 0)
+            
         # GROUP 2: set params, autocalc width/height
 ##        elif isinstance(args[0], float) and isinstance(args[2], float):
 ##            # double precision scalex, double precision scaley, double precision gridx, double precision gridy, text pixeltype, double precision value=1, double precision nodataval=0, double precision skewx=0, double precision skewy=0, boolean touched=false
@@ -403,18 +413,19 @@ class Geometry(object):
             # double precision scalex, double precision scaley, text pixeltype, double precision value=1, double precision nodataval=0, double precision upperleftx=NULL, double precision upperlefty=NULL, double precision skewx=0, double precision skewy=0, boolean touched=false
             # uses upperleft
             scaleX,scaleY,pixeltype = args[:3]
-            value = args[3] if len(args) >= 4 else 1
-            nodataval = args[4] if len(args) >= 5 else 0
+            value = getarg(args, 3, 1) 
+            nodataval = getarg(args, 4, 0) 
             xmin,ymin,xmax,ymax = self.bbox()
-            upperLeftX = args[5] if len(args) >= 6 else xmin
-            upperLeftY = args[6] if len(args) >= 7 else ymax # flipped y by default
-            skewX = args[7] if len(args) >= 8 else 0
-            skewY = args[8] if len(args) >= 9 else 0
+            upperLeftX = getarg(args, 5, xmin) 
+            upperLeftY = getarg(args, 6, ymax) # flipped y by default
+            skewX = getarg(args, 7, 0.0) 
+            skewY = getarg(args, 8, 0.0) 
             width = abs(xmax-upperLeftX) / float(scaleX)
             height = abs(upperLeftY-ymin) / float(scaleY)
             width = int(round(abs(width)))
             height = int(round(abs(height)))
             ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
+            
         # GROUP 3: set width/height, autocalc params
 ##        elif isinstance(args[0], int) and isinstance(args[2], float):
 ##            # integer width, integer height, double precision gridx, double precision gridy, text pixeltype, double precision value=1, double precision nodataval=0, double precision skewx=0, double precision skewy=0, boolean touched=false
@@ -424,13 +435,13 @@ class Geometry(object):
             # integer width, integer height, text pixeltype, double precision value=1, double precision nodataval=0, double precision upperleftx=NULL, double precision upperlefty=NULL, double precision skewx=0, double precision skewy=0, boolean touched=false
             # uses upperleft
             width,height,pixeltype = args[:3]
-            value = args[3] if len(args) >= 4 else 1
-            nodataval = args[4] if len(args) >= 5 else 0
+            value = getarg(args, 3, 1) 
+            nodataval = getarg(args, 4, 0) 
             xmin,ymin,xmax,ymax = self.bbox()
-            upperLeftX = args[5] if len(args) >= 6 else xmin
-            upperLeftY = args[6] if len(args) >= 7 else ymax # flipped y by default
-            skewX = args[7] if len(args) >= 8 else 0
-            skewY = args[8] if len(args) >= 9 else 0
+            upperLeftX = getarg(args, 5, xmin) 
+            upperLeftY = getarg(args, 6, ymax) # flipped y by default
+            skewX = getarg(args, 7, 0.0) 
+            skewY = getarg(args, 8, 0.0) 
             scaleX = abs(xmax-upperLeftX) / float(width)
             scaleY = abs(upperLeftY-ymin) / float(height) * -1 # flipped y by default
             ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
