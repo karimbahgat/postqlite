@@ -71,7 +71,7 @@ for row in cur.execute('select st_asGeoJSON(st_MakeEnvelope(0,0,10,10)) from tes
 
 # as raster
 print 'as raster'
-for geom,rast in cur.execute('select st_Buffer(st_Point(0,0), 50) as "[geom]",st_MakeEmptyRaster(720,360,-180,90,0.5,-0.5,0,0) as "[rast]" from test'):
+for geom,rast in cur.execute('select st_Buffer(st_Point(0,0), 50) as "[geom]",rt_MakeEmptyRaster(720,360,-180,90,0.5,-0.5,0,0) as "[rast]" from test'):
     print geom.bbox(),rast.metadata()
     grast = geom.as_raster(rast, 'u1', 255)
     print grast.summarystats()
@@ -92,7 +92,7 @@ for row in cur.execute('select * from test'):
 
 # read just the types
 print 'reading just the type'
-for row in cur.execute('select st_type(geom) from test'):
+for row in cur.execute('select geometrytype(geom) from test'):
     print row
     break
 
@@ -150,31 +150,31 @@ for row in cur.execute('select st_astext(st_centroid(st_makeenvelope(0,0,10,10))
 
 # buffer
 print 'buffering'
-for row in cur.execute('select st_buffer(geom, 1.0) as "[geom]", st_type(st_buffer(geom, 1.0)) from test'):
+for row in cur.execute('select st_buffer(geom, 1.0) as "[geom]", geometrytype(st_buffer(geom, 1.0)) from test'):
     print row
     break
 
 # intersection
 print 'intersection'
-for row in cur.execute('select st_intersection(geom,geom2) as "[geom]",st_type(st_intersection(geom,geom2)) from test'):
+for row in cur.execute('select st_intersection(geom,geom2) as "[geom]",geometrytype(st_intersection(geom,geom2)) from test'):
     print row
     break
 
 # difference
 print 'difference'
-for row in cur.execute('select st_difference(geom,geom2) as "[geom]",st_type(st_difference(geom,geom2)) from test'):
+for row in cur.execute('select st_difference(geom,geom2) as "[geom]",geometrytype(st_difference(geom,geom2)) from test'):
     print row
     break
 
 # union
 print 'union'
-for row in cur.execute('select st_type(st_union(geom,geom2)) from test'):
+for row in cur.execute('select geometrytype(st_union(geom,geom2)) from test'):
     print row
     break
 
 # simplify
 print 'simplify'
-for row in cur.execute('select st_simplify(geom,0.01) as "[geom]",st_type(st_simplify(geom,0.01)) from test'):
+for row in cur.execute('select st_simplify(geom,0.01) as "[geom]",geometrytype(st_simplify(geom,0.01)) from test'):
     print row
     break
 
@@ -193,7 +193,7 @@ for row in cur.execute('select st_astext(st_simplifyPreserveTopology(geom,0.01))
 
 # agg union
 print 'agg union'
-for row in cur.execute('select st_type(st_union(geom)) from test'):
+for row in cur.execute('select geometrytype(st_union(geom)) from test'):
     print row
     break
 

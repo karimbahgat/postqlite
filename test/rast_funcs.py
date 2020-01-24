@@ -35,7 +35,7 @@ print 'full', cur.execute('select count(oid) from test').fetchone()
 
 # create empty
 print 'create empty'
-for row in cur.execute('select st_metadata(st_MakeEmptyRaster(500,250,-180,90,0.5)) from test'):
+for row in cur.execute('select rt_metadata(rt_MakeEmptyRaster(500,250,-180,90,0.5)) from test'):
     print row
     break
 
@@ -45,55 +45,55 @@ for row in cur.execute('select st_metadata(st_MakeEmptyRaster(500,250,-180,90,0.
 
 # width/height
 print 'width/height'
-for row in cur.execute('select st_width(rast),st_height(rast) from test'):
+for row in cur.execute('select rt_width(rast),rt_height(rast) from test'):
     print row
     break
 
 # numbands
 print 'numbands'
-for row in cur.execute('select st_numbands(rast) from test'):
+for row in cur.execute('select rt_numbands(rast) from test'):
     print row
     break
 
 # georef params
 print 'georeref params'
-for row in cur.execute('select st_ScaleX(rast),st_ScaleY(rast),st_SkewX(rast),st_SkewY(rast),st_UpperLeftX(rast),st_UpperLeftY(rast) from test'):
+for row in cur.execute('select rt_ScaleX(rast),rt_ScaleY(rast),rt_SkewX(rast),rt_SkewY(rast),rt_UpperLeftX(rast),rt_UpperLeftY(rast) from test'):
     print row
     break
 
 # georeference
 print 'georereference'
-for row in cur.execute('select st_georeference(rast) from test'):
+for row in cur.execute('select rt_georeference(rast) from test'):
     print row
     break
 
 # metadata
 print 'metadata'
-for row in cur.execute('select st_metadata(rast) from test'):
+for row in cur.execute('select rt_metadata(rast) from test'):
     print row
     break
 
 # box2d
 print 'box2d'
-for row in cur.execute('select st_asText(st_box2d(rast)) from test'):
+for row in cur.execute('select st_asText(rt_box2d(rast)) from test'):
     print row
     break
 
 # box2d agg
 print 'box2d agg'
-for row in cur.execute('select st_asText(st_Extent(st_box2d(rast))) from test'):
+for row in cur.execute('select st_asText(st_Extent(rt_box2d(rast))) from test'):
     print row
     break
 
 # envelope
 print 'envelope'
-for row in cur.execute('select st_asText(st_envelope(rast)) from test'):
+for row in cur.execute('select st_asText(rt_envelope(rast)) from test'):
     print row
     break
 
 # convex hull
 print 'convex hull'
-for row in cur.execute('select st_asText(st_ConvexHull(rast)) from test'):
+for row in cur.execute('select st_asText(rt_ConvexHull(rast)) from test'):
     print row
     break
 
@@ -103,25 +103,25 @@ for row in cur.execute('select st_asText(st_ConvexHull(rast)) from test'):
 
 # scale
 print 'scale'
-for row in cur.execute('select st_MetaData(st_SetScale(rast,-99,-99)) from test'):
+for row in cur.execute('select rt_MetaData(rt_SetScale(rast,-99,-99)) from test'):
     print row
     break
 
 # skew
 print 'skew'
-for row in cur.execute('select st_MetaData(st_SetSkew(rast,-99,-99)) from test'):
+for row in cur.execute('select rt_MetaData(rt_SetSkew(rast,-99,-99)) from test'):
     print row
     break
 
 # offset
 print 'offset'
-for row in cur.execute('select st_MetaData(st_SetUpperLeft(rast,-99,-99)) from test'):
+for row in cur.execute('select rt_MetaData(rt_SetUpperLeft(rast,-99,-99)) from test'):
     print row
     break
 
 # rotate
 print 'rotate'
-for row in cur.execute('select st_asText(st_ConvexHull(st_SetRotation(rast,0.78))),st_ConvexHull(st_SetRotation(rast,0.78)) as "[geom]" from test'):
+for row in cur.execute('select st_asText(rt_ConvexHull(rt_SetRotation(rast,0.78))),rt_ConvexHull(rt_SetRotation(rast,0.78)) as "[geom]" from test'):
     print row
 ##    geoj = row[1].as_GeoJSON()
 ##    import pythongis as pg
@@ -136,13 +136,13 @@ for row in cur.execute('select st_asText(st_ConvexHull(st_SetRotation(rast,0.78)
 
 # raster to world
 print 'raster to world'
-for row in cur.execute('select st_asText(st_rasterToWorldCoord(rast, 0, 0)) from test'):
+for row in cur.execute('select st_asText(rt_rasterToWorldCoord(rast, 0, 0)) from test'):
     print row
     break
 
 # world to raster
 print 'world to raster'
-for row in cur.execute('select st_asText(st_worldToRasterCoord(rast, 0, 0)) from test'):
+for row in cur.execute('select st_asText(rt_worldToRasterCoord(rast, 0, 0)) from test'):
     print row
     break
 
@@ -159,13 +159,13 @@ for rast1,rast2 in cur.execute("select t1.rast,t2.rast from test as t1, test as 
 
 # same alignment, aggregate
 print 'same alignment, aggregate'
-for row in cur.execute("select st_sameAlignment(rast) from test"):
+for row in cur.execute("select rt_sameAlignment(rast) from test"):
     print row
     break
 
 # intersects
 print 'intersects'
-for (r1,r2) in cur.execute("select t1.rast,t2.rast from test as t1,test as t2 where st_Intersects(t1.rast, t2.rast) limit 10 offset 1"):
+for (r1,r2) in cur.execute("select t1.rast,t2.rast from test as t1,test as t2 where rt_Intersects(t1.rast, t2.rast) limit 10 offset 1"):
     print r1.bbox(),r2.bbox()
 
 
@@ -174,19 +174,19 @@ for (r1,r2) in cur.execute("select t1.rast,t2.rast from test as t1,test as t2 wh
 
 # band selection
 print 'band selection'
-for row in cur.execute("select st_numBands(rast), st_numBands(st_Band(rast, 1)), st_numBands(st_Band(rast, '1')) from test"):
+for row in cur.execute("select rt_numBands(rast), rt_numBands(rt_Band(rast, 1)), rt_numBands(rt_Band(rast, '1')) from test"):
     print row
     break
 
 # band nodata
 print 'band nodata'
-for row in cur.execute("select st_bandNoDataValue(rast,1) from test"):
+for row in cur.execute("select rt_bandNoDataValue(rast,1) from test"):
     print row
     break
 
 # band pixel type
 print 'band pixel type'
-for row in cur.execute("select st_bandPixelType(rast,1) from test"):
+for row in cur.execute("select rt_bandPixelType(rast,1) from test"):
     print row
     break
 
@@ -202,7 +202,7 @@ for row in cur.execute("select rast from test"):
 
 # band summary stats
 print 'band summary stats'
-for row in cur.execute("select st_summarystats(rast,1) from test"):
+for row in cur.execute("select rt_summarystats(rast,1) from test"):
     print row
     break
 
@@ -212,7 +212,7 @@ for row in cur.execute("select st_summarystats(rast,1) from test"):
 
 # resize
 print 'resize'
-for row in cur.execute('''select st_resize(rast,200,100) as "[rast]", st_width(st_resize(rast,200,100)),st_height(st_resize(rast,200,100)) from test'''):
+for row in cur.execute('''select rt_resize(rast,200,100) as "[rast]", rt_width(rt_resize(rast,200,100)),rt_height(rt_resize(rast,200,100)) from test'''):
     print row
     #arr = row[0].data(1)
     #print arr
@@ -245,12 +245,12 @@ for row in cur.execute('''select rast from test'''):
 
 # map algebra, multi
 print 'map algebra, multi'
-for rast1,rast2 in cur.execute('''with cross as (select t1.rast as rast, st_setUpperLeft(t2.rast,st_upperleftx(t2.rast)*0.75,st_upperlefty(t2.rast)*0.75) as shift
+for rast1,rast2 in cur.execute('''with cross as (select t1.rast as rast, rt_setUpperLeft(t2.rast,rt_upperleftx(t2.rast)*0.75,rt_upperlefty(t2.rast)*0.75) as shift
                                                     from test as t1, test as t2
                                                     where t1.rast != t2.rast)
                                   select rast as "[rast]", shift as "[rast]"
                                   from cross
-                                  where st_intersects(rast,shift)
+                                  where rt_intersects(rast,shift)
                                   limit 2'''):
     print 1, rast1.summarystats()
     print 2, rast2.summarystats()
@@ -277,12 +277,12 @@ for rast1,rast2 in cur.execute('''with cross as (select t1.rast as rast, st_setU
 
 # intersection
 print 'intersection'
-for rast1,rast2 in cur.execute("""with cross as (select t1.rast as rast, st_setUpperLeft(t2.rast,st_upperleftx(t2.rast)*0.75,st_upperlefty(t2.rast)*0.75) as shift
+for rast1,rast2 in cur.execute("""with cross as (select t1.rast as rast, rt_setUpperLeft(t2.rast,rt_upperleftx(t2.rast)*0.75,rt_upperlefty(t2.rast)*0.75) as shift
                                                     from test as t1, test as t2
                                                     where t1.rast != t2.rast)
                                   select rast as "[rast]", shift as "[rast]"
                                   from cross
-                                  where st_intersects(rast,shift)
+                                  where rt_intersects(rast,shift)
                                   limit 2
                                     """):
     print rast1.bbox(),rast2.bbox(),rast1.intersects(rast2)
@@ -293,15 +293,15 @@ for rast1,rast2 in cur.execute("""with cross as (select t1.rast as rast, st_setU
 print 'intersection 2'
 ##for rasterized,intersected in cur.execute('''
 ##                                            select st_asRaster(st_Buffer(st_Point(2000,2000), 500), rast, 'u1', 255) as "[rast]",
-##                                                    st_Intersection(st_asRaster(st_Buffer(st_Point(2000,2000), 500), rast, 'u1', 255), rast) as "[rast]"
+##                                                    rt_Intersection(st_asRaster(st_Buffer(st_Point(2000,2000), 500), rast, 'u1', 255), rast) as "[rast]"
 ##                                            from test
-##                                            where st_intersects(st_Buffer(st_Point(2000,2000), 500), rast)
+##                                            where st_intersects(st_Buffer(st_Point(2000,2000), 500), rt_envelope(rast))
 ##                                            '''):
 for buff,rast in cur.execute('''
                                 select st_Buffer(st_Point(2000,2000), 500) as "[geom]",
                                         rast
                                 from test
-                                where st_distance(st_Buffer(st_Point(2000,2000), 500), st_Envelope(rast)) = 0
+                                where st_intersects(st_Buffer(st_Point(2000,2000), 500), rt_Envelope(rast))
                                 limit 1
                                 '''):
     print buff.bbox(),rast.bbox()
@@ -331,8 +331,8 @@ print 'union aggregate'
 import cProfile
 #p=cProfile.Profile()
 #p.enable()
-agg = postqlite.raster.raster.ST_Union()
-for (rast,) in cur.execute('select st_setUpperLeft(rast,st_upperleftx(rast)*0.75,st_upperlefty(rast)*0.75) as "[rast]" from test'):
+agg = postqlite.raster.raster.RT_Union()
+for (rast,) in cur.execute('select rt_setUpperLeft(rast,rt_upperleftx(rast)*0.75,rt_upperlefty(rast)*0.75) as "[rast]" from test'):
     print rast
     agg.step(rast.dump_wkb(), 'sum')
     #Image.fromarray(agg.result.data(1)).show()

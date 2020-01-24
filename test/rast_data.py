@@ -56,30 +56,12 @@ print 'countries', cur.execute('select count(oid) from countries').fetchone()
 
 
 
-
 # country previews
 for name,rast in cur.execute('''select name,st_asRaster(geom,0.1,-0.1,'u1',255) as "[rast]" from countries where geom is not null limit 1'''):
     print name,rast
     arr = rast.data(1)
     Image.fromarray(arr).show()
 
-
-
-
-
-# preview maps
-print 'preview maps'
-for row in cur.execute('''
-                    select file,rast
-                    from maps
-                        '''):
-    print row
-    rast = row[1]
-    arr = rast.data(1)
-    from PIL import Image
-    Image.fromarray(arr).show()
-
-    break
 
 
 
@@ -96,21 +78,21 @@ print 'country map intersections'
 ##                        )
 ##                    group by name
 ##                        '''):
-##for row in cur.execute('''
-##                    select name, st_asRaster(geom, st_scalex(rast), st_scaley(rast), 'u1', 255, 0, st_upperleftx(rast), st_upperlefty(rast)) as "[rast]"
-##                    from maps,countries
-##                    where geom is not null and st_distance(geom, st_envelope(rast)) = 0
-##                        '''):
 for row in cur.execute('''
-                    select name, st_asRaster(geom, st_scalex(rast), st_scaley(rast), 'u1', 255) as "[rast]"
+                    select name, st_asRaster(geom, rt_scalex(rast), rt_scaley(rast), 'u1', 255, 0, rt_upperleftx(rast), rt_upperlefty(rast)) as "[rast]", geom, rast
                     from maps,countries
-                    where geom is not null and st_distance(geom, st_envelope(rast)) = 0
+                    where geom is not null and st_intersects(geom, rt_envelope(rast))
                         '''):
+##for row in cur.execute('''
+##                    select name, st_asRaster(geom, st_scalex(rast), st_scaley(rast), 'u1', 255) as "[rast]"
+##                    from maps,countries
+##                    where geom is not null and st_intersects(geom, st_envelope(rast))
+##                        '''):
     print row
-    rast = row[1]
-    arr = rast.data(1)
-    from PIL import Image
-    Image.fromarray(arr).show()
+    name,georast,geom,rast = row
+    Image.fromarray(rast.data(1)).show()
+    Image.fromarray(georast.data(1)).show()
+    Image.fromarray(rast.intersection(georast, 'band2').data(1)).show()
 
     break
 

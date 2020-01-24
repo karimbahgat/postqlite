@@ -43,7 +43,7 @@ def register_funcs(conn):
     conn.create_function('st_AsRaster', -1, lambda *args: Geometry(args[0]).as_raster(*args[1:]).dump_wkb() if args[0] else None )
     
     # brings back simple types
-    conn.create_function('st_Type', 1, lambda wkb: Geometry(wkb).type() if wkb != None else None )
+    conn.create_function('GeometryType', 1, lambda wkb: Geometry(wkb).type() if wkb != None else None )
     conn.create_function('st_Area', 1, lambda wkb: Geometry(wkb).area() if wkb != None else None )
     conn.create_function('st_Xmin', 1, lambda wkb: Geometry(wkb).bbox()[0] if wkb != None else None )
     conn.create_function('st_Xmax', 1, lambda wkb: Geometry(wkb).bbox()[2] if wkb != None else None )
@@ -363,9 +363,13 @@ class Geometry(object):
 
         # parse args
         # GROUP 1: existing raster
-        if isinstance(args[0], Raster):
+        if not isinstance(args[0], (float,int)):
             # raster ref, text pixeltype, double precision value=1, double precision nodataval=0, boolean touched=false
-            ref, pixeltype = args[:2]
+            if isinstance(args[0], Raster):
+                ref = args[0]
+            else:
+                ref = Raster(args[0])
+            pixeltype = args[1]
             value = args[2] if len(args) >= 3 else 1
             nodataval = args[3] if len(args) >= 4 else 0
         # GROUP 2: set params, autocalc width/height
@@ -384,8 +388,8 @@ class Geometry(object):
             upperLeftY = args[6] if len(args) >= 7 else ymax # flipped y by default
             skewX = args[7] if len(args) >= 8 else 0
             skewY = args[8] if len(args) >= 9 else 0
-            width = (xmax-xmin) / float(scaleX)
-            height = (ymax-ymin) / float(scaleY)
+            width = abs(xmax-upperLeftX) / float(scaleX)
+            height = abs(upperLeftY-ymin) / float(scaleY)
             width = int(round(abs(width)))
             height = int(round(abs(height)))
             ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
@@ -405,8 +409,8 @@ class Geometry(object):
             upperLeftY = args[6] if len(args) >= 7 else ymax # flipped y by default
             skewX = args[7] if len(args) >= 8 else 0
             skewY = args[8] if len(args) >= 9 else 0
-            scaleX = (xmax-xmin) / float(width)
-            scaleY = (ymax-ymin) / float(height) * -1 # flipped y by default
+            scaleX = abs(xmax-upperLeftX) / float(width)
+            scaleY = abs(upperLeftY-ymin) / float(height) * -1 # flipped y by default
             ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
         else:
             raise Exception('Invalid function args: {}'.format(args))

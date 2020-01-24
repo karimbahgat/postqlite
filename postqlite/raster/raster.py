@@ -16,7 +16,7 @@ from wkb_raster import write_wkb_raster
 
 # TODOs:
 # 1 (DONE): Honor nodata values throughout using np.ma arrays if rast has nodata ('hasNodataValue'), incl summarystats, mapalgebra, intersection, etc
-# 2: All vector and raster funcs and aggs must be moved to a separate 'register.py' module
+# 2 (DONE): All vector and raster funcs and aggs must be moved to a separate 'register.py' module
 # with separate functions for each that detects vector vs raster and calls the corresponding func/agg
 # 3 (DONE): Add geometry burning function, asRaster() using basic PIL drawing
 # 4: Figure out correct wkb handling (keep it as sqlite's read-write buffer? does that change the underlaying db data? how to create own read-write buffer?)
@@ -27,86 +27,85 @@ def register_funcs(conn):
     # see: https://postgis.net/docs/reference.html
 
     # constructors
-    conn.create_function('ST_MakeEmptyRaster', -1, lambda *args: make_empty_raster(*args).dump_wkb() ) 
-    conn.create_function('st_RastFromWKB', 1, lambda wkb: Raster(wkb).dump_wkb() ) # whats the point of this?
-    conn.create_function('st_Band', 2, lambda wkb,i: Raster(wkb).band(i).dump_wkb() ) 
+    conn.create_function('rt_MakeEmptyRaster', -1, lambda *args: make_empty_raster(*args).dump_wkb() ) 
+    conn.create_function('rt_RastFromWKB', 1, lambda wkb: Raster(wkb).dump_wkb() ) # whats the point of this?
+    conn.create_function('rt_Band', 2, lambda wkb,i: Raster(wkb).band(i).dump_wkb() ) 
 
     # metadata
-    conn.create_function('st_Width', 1, lambda wkb: Raster(wkb).width if wkb else None)
-    conn.create_function('st_Height', 1, lambda wkb: Raster(wkb).height if wkb else None)
-    conn.create_function('st_ScaleX', 1, lambda wkb: Raster(wkb).scaleX if wkb else None)
-    conn.create_function('st_ScaleY', 1, lambda wkb: Raster(wkb).scaleY if wkb else None)
-    conn.create_function('st_SkewX', 1, lambda wkb: Raster(wkb).skewX if wkb else None)
-    conn.create_function('st_SkewY', 1, lambda wkb: Raster(wkb).skewY if wkb else None)
-    conn.create_function('st_UpperLeftX', 1, lambda wkb: Raster(wkb).upperLeftX if wkb else None)
-    conn.create_function('st_UpperLeftY', 1, lambda wkb: Raster(wkb).upperLeftY if wkb else None)
-    conn.create_function('st_NumBands', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
-    conn.create_function('st_GeoReference', 1, lambda wkb: json.dumps(Raster(wkb).georeference()) if wkb else None)
-    conn.create_function('st_MetaData', 1, lambda wkb: json.dumps(Raster(wkb).metadata()) if wkb else None)
+    conn.create_function('rt_Width', 1, lambda wkb: Raster(wkb).width if wkb else None)
+    conn.create_function('rt_Height', 1, lambda wkb: Raster(wkb).height if wkb else None)
+    conn.create_function('rt_ScaleX', 1, lambda wkb: Raster(wkb).scaleX if wkb else None)
+    conn.create_function('rt_ScaleY', 1, lambda wkb: Raster(wkb).scaleY if wkb else None)
+    conn.create_function('rt_SkewX', 1, lambda wkb: Raster(wkb).skewX if wkb else None)
+    conn.create_function('rt_SkewY', 1, lambda wkb: Raster(wkb).skewY if wkb else None)
+    conn.create_function('rt_UpperLeftX', 1, lambda wkb: Raster(wkb).upperLeftX if wkb else None)
+    conn.create_function('rt_UpperLeftY', 1, lambda wkb: Raster(wkb).upperLeftY if wkb else None)
+    conn.create_function('rt_NumBands', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
+    conn.create_function('rt_GeoReference', 1, lambda wkb: json.dumps(Raster(wkb).georeference()) if wkb else None)
+    conn.create_function('rt_MetaData', 1, lambda wkb: json.dumps(Raster(wkb).metadata()) if wkb else None)
 
-    conn.create_function('st_Box2D', 1, lambda wkb: Raster(wkb).box2d().dump_wkb() if wkb else None)
+    conn.create_function('rt_Box2D', 1, lambda wkb: Raster(wkb).box2d().dump_wkb() if wkb else None)
 
-    #conn.create_function('st_BandMetaData', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
-    conn.create_function('st_BandNoDataValue', 2, lambda wkb,band: Raster(wkb).nodataval(band) if wkb else None)
-    #conn.create_function('st_BandIsNoData', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
-    conn.create_function('st_BandPixelType', 2, lambda wkb,band: Raster(wkb).pixel_type(band) if wkb else None)
-    #conn.create_function('st_HasNoBand', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
+    #conn.create_function('rt_BandMetaData', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
+    conn.create_function('rt_BandNoDataValue', 2, lambda wkb,band: Raster(wkb).nodataval(band) if wkb else None)
+    #conn.create_function('rt_BandIsNoData', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
+    conn.create_function('rt_BandPixelType', 2, lambda wkb,band: Raster(wkb).pixel_type(band) if wkb else None)
+    #conn.create_function('rt_HasNoBand', 1, lambda wkb: Raster(wkb).numbands if wkb else None)
 
     # setting
-    conn.create_function('st_SetRotation', 2, lambda wkb,rad: Raster(wkb).set_rotation(rad).dump_wkb() if wkb else None)
-    conn.create_function('st_SetScale', 3, lambda wkb,x,y: Raster(wkb).set_scale(x,y).dump_wkb() if wkb else None)
-    conn.create_function('st_SetSkew', 3, lambda wkb,x,y: Raster(wkb).set_skew(x,y).dump_wkb() if wkb else None)
-    conn.create_function('st_SetUpperLeft', 3, lambda wkb,x,y: Raster(wkb).set_upperleft(x,y).dump_wkb() if wkb else None)
+    conn.create_function('rt_SetRotation', 2, lambda wkb,rad: Raster(wkb).set_rotation(rad).dump_wkb() if wkb else None)
+    conn.create_function('rt_SetScale', 3, lambda wkb,x,y: Raster(wkb).set_scale(x,y).dump_wkb() if wkb else None)
+    conn.create_function('rt_SetSkew', 3, lambda wkb,x,y: Raster(wkb).set_skew(x,y).dump_wkb() if wkb else None)
+    conn.create_function('rt_SetUpperLeft', 3, lambda wkb,x,y: Raster(wkb).set_upperleft(x,y).dump_wkb() if wkb else None)
 
     # representations
-    #conn.create_function('st_Summary', 1, lambda wkb: Raster(wkb).summary() if wkb else None)
-    conn.create_function('st_Envelope', 1, lambda wkb: Raster(wkb).envelope().dump_wkb() if wkb else None)
-    conn.create_function('st_ConvexHull', 1, lambda wkb: Raster(wkb).convex_hull().dump_wkb() if wkb else None)
-    #conn.create_function('st_MinConvexHull', 1, lambda wkb: Raster(wkb).min_convex_hull().dump_wkb() if wkb else None)
-    conn.create_function('st_AsBinary', 1, lambda wkb: Raster(wkb).dump_wkb() if wkb else None)
+    #conn.create_function('rt_Summary', 1, lambda wkb: Raster(wkb).summary() if wkb else None)
+    conn.create_function('rt_Envelope', 1, lambda wkb: Raster(wkb).envelope().dump_wkb() if wkb else None)
+    conn.create_function('rt_ConvexHull', 1, lambda wkb: Raster(wkb).convex_hull().dump_wkb() if wkb else None)
+    #conn.create_function('rt_MinConvexHull', 1, lambda wkb: Raster(wkb).min_convex_hull().dump_wkb() if wkb else None)
+    conn.create_function('rt_AsBinary', 1, lambda wkb: Raster(wkb).dump_wkb() if wkb else None)
     #PNG+JPEG? requires img type column
 
     # querying
-    conn.create_function('st_WorldToRasterCoord', 3, lambda wkb,x,y: Raster(wkb).world_to_raster_coord(x, y).dump_wkb() if wkb else None)
-    conn.create_function('st_RasterToWorldCoord', 3, lambda wkb,x,y: Raster(wkb).raster_to_world_coord(x, y).dump_wkb() if wkb else None)
-    #conn.create_function('st_Value', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
-    #conn.create_function('st_SetValue', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
-    #conn.create_function('st_PixelAsPolygon', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
-    #conn.create_function('st_PixelAsPoint', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
-    #conn.create_function('st_PixelAsCentroid', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    conn.create_function('rt_WorldToRasterCoord', 3, lambda wkb,x,y: Raster(wkb).world_to_raster_coord(x, y).dump_wkb() if wkb else None)
+    conn.create_function('rt_RasterToWorldCoord', 3, lambda wkb,x,y: Raster(wkb).raster_to_world_coord(x, y).dump_wkb() if wkb else None)
+    #conn.create_function('rt_Value', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    #conn.create_function('rt_SetValue', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    #conn.create_function('rt_PixelAsPolygon', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    #conn.create_function('rt_PixelAsPoint', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
+    #conn.create_function('rt_PixelAsCentroid', 3, lambda wkb,x,y: Raster(wkb).value(x, y) if wkb else None)
 
     # stats
-    conn.create_function('st_SummaryStats', 2, lambda wkb,band: json.dumps(Raster(wkb).summarystats(band)) if wkb else None)
+    conn.create_function('rt_SummaryStats', 2, lambda wkb,band: json.dumps(Raster(wkb).summarystats(band)) if wkb else None)
 
     # changing
-    conn.create_function('st_Resize', -1, lambda *args: Raster(args[0]).resize(*args[1:]).dump_wkb() if args[0] else None)
-    #conn.create_function('st_Rescale', -1, lambda *args: Raster(args[0]).rescale(*args[1:]).dump_wkb() if args[0] else None)
-    #conn.create_function('st_Resample', 2, lambda wkb,refwkb: Raster(wkb).resample(Raster(refwkb)).dump_wkb() if wkb else None)
-    #conn.create_function('st_Transform', 2, lambda wkb,crs: Raster(wkb).transform(crs).dump_wkb() if wkb else None)
+    conn.create_function('rt_Resize', -1, lambda *args: Raster(args[0]).resize(*args[1:]).dump_wkb() if args[0] else None)
+    #conn.create_function('rt_Rescale', -1, lambda *args: Raster(args[0]).rescale(*args[1:]).dump_wkb() if args[0] else None)
+    #conn.create_function('rt_Resample', 2, lambda wkb,refwkb: Raster(wkb).resample(Raster(refwkb)).dump_wkb() if wkb else None)
+    #conn.create_function('rt_Transform', 2, lambda wkb,crs: Raster(wkb).transform(crs).dump_wkb() if wkb else None)
 
     # interacting
-    #conn.create_function('st_Clip', 2, lambda wkb,geomwkb: Raster(wkb).clip(Geometry(geomwkb)).dump_wkb() if wkb and geomwkb else None)
-    conn.create_function('st_Intersection', -1, lambda *args: Raster(args[0]).intersection(Raster(*args[1:])).dump_wkb() if args[0] else None)
-    conn.create_function('st_RasterIntersection', -1, lambda *args: Raster(args[0]).intersection(Raster(*args[1:])).dump_wkb() if args[0] else None)
-    conn.create_function('st_MapAlgebra', -1, lambda *args: Raster(args[0]).mapalgebra(*args[1:]).dump_wkb() if args[0] else None)
+    #conn.create_function('rt_Clip', 2, lambda wkb,geomwkb: Raster(wkb).clip(Geometry(geomwkb)).dump_wkb() if wkb and geomwkb else None)
+    conn.create_function('rt_Intersection', -1, lambda *args: Raster(args[0]).intersection(Raster(*args[1:])).dump_wkb() if args[0] else None)
+    conn.create_function('rt_MapAlgebra', -1, lambda *args: Raster(args[0]).mapalgebra(*args[1:]).dump_wkb() if args[0] else None)
 
     # relations
-    conn.create_function('st_SameAlignment', 2, lambda wkb,otherwkb: Raster(wkb).same_alignment(Raster(otherwkb)) if wkb and otherwkb else None)
-    conn.create_function('st_Intersects', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
-    #conn.create_function('st_Disjoint', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
+    conn.create_function('rt_SameAlignment', 2, lambda wkb,otherwkb: Raster(wkb).same_alignment(Raster(otherwkb)) if wkb and otherwkb else None)
+    conn.create_function('rt_Intersects', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
+    #conn.create_function('rt_Disjoint', 2, lambda wkb,otherwkb: Raster(wkb).intersects(Raster(otherwkb)) if wkb and otherwkb else None)
 
 def register_aggs(conn):
-    conn.create_aggregate('st_SameAlignment', 1, ST_SameAlignment)
+    conn.create_aggregate('rt_SameAlignment', 1, RT_SameAlignment)
     # TODO: ST_Union name currently crashes with the geometry agg by the same name
     # NOTE: The WKB format restricts the width/height to max 65535
     # ...so will fail if unioning very large rasters, which I guess is okay
     # ...since the purpose is to work with tiles iteratively
-    conn.create_aggregate('st_RasterUnion', -1, ST_Union)
+    conn.create_aggregate('rt_Union', -1, RT_Union)
 
 
 # classes
 
-class ST_SameAlignment(object):
+class RT_SameAlignment(object):
     def __init__(self):
         self.ref = None
         self.failed = False
@@ -129,7 +128,7 @@ class ST_SameAlignment(object):
         success = not self.failed
         return success
 
-class ST_Union(object):
+class RT_Union(object):
     # NOTE: currently only unions one band, whereas postgis does all if not specified
     def __init__(self):
         self.result = None
