@@ -92,7 +92,10 @@ for row in cur.execute('''
     name,georast,geom,rast = row
     Image.fromarray(rast.data(1)).show()
     Image.fromarray(georast.data(1)).show()
-    Image.fromarray(rast.intersection(georast, 'band2').data(1)).show()
+
+    Image.fromarray(rast.intersection(georast, 'band1').data(1)).show()
+    Image.fromarray(rast.mapalgebra(georast, '([rast1]+[rast2]/2.0)', None, 'intersection').data(1)).show()
+    Image.fromarray(rast.mapalgebra(georast, '([rast1]+[rast2]/2.0)', None, 'union').data(1)).show()
 
     break
 

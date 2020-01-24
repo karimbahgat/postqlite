@@ -33,7 +33,7 @@ print 'full', cur.execute('select count(oid) from test').fetchone()
 # rasterize all
 # (ie take the st_rasterunion of all st_asraster)
 print 'rasterize all'
-for (rast,) in cur.execute('''select st_rasterunion(st_asRaster(geom,1.0,1.0,'u1',255,0,round(st_xmin(geom),0),round(st_ymin(geom),0))) as "[rast]" from test where geom is not null'''):
+for (rast,) in cur.execute('''select rt_union(st_asRaster(geom,1.0,-1.0,'u1',255,0,round(st_xmin(geom),0),round(st_ymin(geom),0))) as "[rast]" from test where geom is not null limit 30'''):
 #for (rast,) in cur.execute('''select st_asRaster(geom,1.0,1.0,'u1',255,0,round(st_xmin(geom),0),round(st_ymin(geom),0)) as "[rast]" from test where geom is not null'''):
 ##for (geom,) in cur.execute('''select geom from test where geom is not null'''):
 ##    print geom
@@ -44,8 +44,6 @@ for (rast,) in cur.execute('''select st_rasterunion(st_asRaster(geom,1.0,1.0,'u1
     from PIL import Image
     Image.fromarray(arr).show()
     break
-
-fgfdgfd
 
 # features that intersect eachother
 print 'self intersect'

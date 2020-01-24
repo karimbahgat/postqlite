@@ -109,7 +109,7 @@ for row in cur.execute('select st_asText(box2d(geom)) from test'):
     break
 
 # box2d expand
-print 'box2d expand'
+print 'expand'
 for row in cur.execute('select st_asText(st_expand(geom, 0.666)) from test'):
     print row
     break

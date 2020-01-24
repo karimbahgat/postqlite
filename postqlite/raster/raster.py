@@ -96,10 +96,6 @@ def register_funcs(conn):
 
 def register_aggs(conn):
     conn.create_aggregate('rt_SameAlignment', 1, RT_SameAlignment)
-    # TODO: ST_Union name currently crashes with the geometry agg by the same name
-    # NOTE: The WKB format restricts the width/height to max 65535
-    # ...so will fail if unioning very large rasters, which I guess is okay
-    # ...since the purpose is to work with tiles iteratively
     conn.create_aggregate('rt_Union', -1, RT_Union)
 
 
@@ -245,7 +241,12 @@ class Raster(object):
         # TODO: its possible that each reference to rast column in query creates a new raster instance from the db for each
         # in that case, storing ._header doesnt help and loading entire header becomes very duplicative
         # explore only loading the bytes needed for each header param
-        # OR access a cached version of the raster instance based on the wkb bytes? 
+        # OR access a cached version of the raster instance based on the wkb bytes?
+
+        # NOTE: The WKB format restricts the width/height to max 65535
+        # ...so will fail if unioning very large rasters, which I guess is okay
+        # ...since the purpose is to work with tiles iteratively
+    
         (endian,) = unpack_from('<b', self._wkb)
 
         if endian == 0:
@@ -722,6 +723,9 @@ class Raster(object):
     # changing
 
     def resize(self, *args):
+        '''
+        width, height, [algorithm='NearestNeighbour']
+        '''
         if not self._header:
             self._load_header()
 
@@ -811,47 +815,19 @@ class Raster(object):
 ##        rast = self.resample(*resample_args)
 ##        return rast
 
-    def intersection(self, *args):
-        if not self._header:
-            self._load_header()
-            
-        # parse args
-        assert len(args) >= 1
-        if isinstance(args[0], Raster):
-            if len(args) >= 2 and isinstance(args[1], basestring):
-                # raster rast2, text returnband, double precision[] nodataval
-                rast2,returnband = args[:2]
-                nodataval = args[2] if len(args) >= 3 else None
-                band1 = band2 = 1
-            else:
-                # raster rast2, double precision[] nodataval
-                rast2 = args[0]
-                returnband = 'band1' # correct default? 
-                nodataval = args[1] if len(args) >= 2 else None
-                band1 = band2 = 1
-        elif isinstance(args[0], int):
-            if len(args) >= 4 and isinstance(args[3], basestring):
-                # integer band1, raster rast2, integer band2, text returnband, double precision[] nodataval
-                band1,rast2,band2,returnband = args[:4]
-                nodataval = args[4] if len(args) >= 5 else None
-            else:
-                # integer band1, raster rast2, integer band2, double precision[] nodataval
-                band1,rast2,band2 = args[:3]
-                returnband = 'band1' # correct default? 
-                nodataval = args[3] if len(args) >= 4 else None
-        else:
-            raise Exception('Invalid function args: {}'.format(args))
-
-        # prep args for mapalgebra
-        # integer nband1, raster rast2, integer nband2, text expression, text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
-        returnband = returnband.lower()
-        expr = {'band1':'[rast1]', 'band2':'[rast2]'}[returnband] # TODO: 'both' not yet supported 
-        pixeltype = None
-        # nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
-        result = self.mapalgebra(band1, rast2, band2, expr, pixeltype, 'intersection')
-        return result
-
     def mapalgebra(self, *args):
+        '''
+        Single mode:
+            Variant 1:
+                nband, pixeltype, expression, [nodataval=NULL]
+            Variant 2:
+                pixeltype, expression, [nodataval=NULL]
+        Multi mode:
+            Variant 3:
+                nband1, rast2, nband2, expression, [text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL]
+            Variant 4:
+                rast2, expression, [text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL]
+        '''
         if not self._header:
             self._load_header()
 
@@ -866,7 +842,7 @@ class Raster(object):
             mode = 'single'
             
         elif isinstance(args[0], basestring) and isinstance(args[1], basestring):
-            # nband, pixeltype, expression, nodataval=NULL
+            # pixeltype, expression, nodataval=NULL
             pixeltype, expression = args[:2]
             nband = 1
             nodataval = args[2] if len(args) >= 3 else None
@@ -1075,8 +1051,10 @@ class Raster(object):
                 pixelcorners = [self.world_to_raster_coord(x,y).as_GeoJSON()['coordinates'] for x,y in corners]
                 pxs,pys = zip(*pixelcorners)
                 pxmin,pymin,pxmax,pymax = min(pxs),min(pys),max(pxs),max(pys)
+                upperLeftX = xmin if self.scaleX > 0 else xmax
+                upperLeftY = ymin if self.scaleY > 0 else ymax
                 # calculate new georef from these pixel positions
-                ipX,ipY = xmin,ymin # TODO: what about y flipping?
+                ipX,ipY = upperLeftX,upperLeftY 
                 width = pxmax-pxmin
                 height = pymax-pymin
                 # unless specified, intersection will not include pixels where only one raster is valid
@@ -1096,8 +1074,10 @@ class Raster(object):
                 pixelcorners = [self.world_to_raster_coord(x,y).as_GeoJSON()['coordinates'] for x,y in corners]
                 pxs,pys = zip(*pixelcorners)
                 pxmin,pymin,pxmax,pymax = min(pxs),min(pys),max(pxs),max(pys)
+                upperLeftX = xmin if self.scaleX > 0 else xmax
+                upperLeftY = ymin if self.scaleY > 0 else ymax
                 # calculate new georef from these pixel positions
-                ipX,ipY = xmin,ymin # TODO: what about y flipping?
+                ipX,ipY = upperLeftX,upperLeftY 
                 width = pxmax-pxmin
                 height = pymax-pymin
                 # unless specified, union will include pixels where any of the rasters are valid
@@ -1358,6 +1338,57 @@ class Raster(object):
         rast = Raster(wkb_buf)
         return rast
 
+    def intersection(self, *args):
+        '''
+        Variant 1:
+            rast2, text returnband, [nodataval=NULL]
+        Variant 2:
+            rast2, [nodataval=NULL]
+        Variant 3:
+            band1, rast2, band2, text returnband, [nodataval=NULL]
+        Variant 4:
+            band1, rast2, band2, [nodataval=NULL]
+        '''
+        if not self._header:
+            self._load_header()
+            
+        # parse args
+        assert len(args) >= 1
+        if isinstance(args[0], Raster):
+            if len(args) >= 2 and isinstance(args[1], basestring):
+                # raster rast2, text returnband, double precision[] nodataval
+                rast2,returnband = args[:2]
+                nodataval = args[2] if len(args) >= 3 else None
+                band1 = band2 = 1
+            else:
+                # raster rast2, double precision[] nodataval
+                rast2 = args[0]
+                returnband = 'band1' # correct default? 
+                nodataval = args[1] if len(args) >= 2 else None
+                band1 = band2 = 1
+        elif isinstance(args[0], int):
+            if len(args) >= 4 and isinstance(args[3], basestring):
+                # integer band1, raster rast2, integer band2, text returnband, double precision[] nodataval
+                band1,rast2,band2,returnband = args[:4]
+                nodataval = args[4] if len(args) >= 5 else None
+            else:
+                # integer band1, raster rast2, integer band2, double precision[] nodataval
+                band1,rast2,band2 = args[:3]
+                returnband = 'band1' # correct default? 
+                nodataval = args[3] if len(args) >= 4 else None
+        else:
+            raise Exception('Invalid function args: {}'.format(args))
+
+        # prep args for mapalgebra
+        # integer nband1, raster rast2, integer nband2, text expression, text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
+        returnband = returnband.lower()
+        expr = {'band1':'[rast1]', 'band2':'[rast2]'}[returnband] # TODO: 'both' not yet supported 
+        pixeltype = None
+        # nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL
+        result = self.mapalgebra(band1, rast2, band2, expr, pixeltype, 'intersection')
+        return result
+
+
 
     ############
     # relations
@@ -1394,6 +1425,12 @@ class Raster(object):
         return False
 
     def intersects(self, *args):
+        '''
+        Variant 1:
+            nbandA, rastB, nbandB, [nodata=NULL]
+        Variant 2:
+            rastB
+        '''
         # for now only allow the simple raster-to-raster intersects
 
         # parse args

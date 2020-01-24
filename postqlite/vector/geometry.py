@@ -49,15 +49,17 @@ def register_funcs(conn):
     conn.create_function('st_Xmax', 1, lambda wkb: Geometry(wkb).bbox()[2] if wkb != None else None )
     conn.create_function('st_Ymin', 1, lambda wkb: Geometry(wkb).bbox()[1] if wkb != None else None )
     conn.create_function('st_Ymax', 1, lambda wkb: Geometry(wkb).bbox()[3] if wkb != None else None )
-    conn.create_function('Box2d', 1, lambda wkb: Geometry(wkb).box2d().dump_wkb() if wkb != None else None )
-    conn.create_function('st_Expand', 2, lambda wkb,dist: Geometry(wkb).box2d_expand(dist).dump_wkb() if wkb != None else None )
 
     conn.create_function('st_Intersects', 2, lambda wkb,otherwkb: Geometry(wkb).intersects(Geometry(otherwkb)) if wkb != None and otherwkb != None else None )
     conn.create_function('st_Disjoint', 2, lambda wkb,otherwkb: Geometry(wkb).disjoint(Geometry(otherwkb)) if wkb != None and otherwkb != None else None )
 
     conn.create_function('st_Distance', 2, lambda wkb,otherwkb: Geometry(wkb).distance(Geometry(otherwkb)) if wkb != None else None )
 
-    # brings back the object
+    # brings back geom
+    conn.create_function('Box2d', 1, lambda wkb: Geometry(wkb).box2d().dump_wkb() if wkb != None else None )
+    conn.create_function('st_Envelope', 1, lambda wkb: Geometry(wkb).envelope().dump_wkb() if wkb != None else None )
+    conn.create_function('st_Expand', 2, lambda wkb,dist: Geometry(wkb).expand(dist).dump_wkb() if wkb != None else None )
+    
     conn.create_function('st_Centroid', 1, lambda wkb: Geometry(wkb).centroid().dump_wkb() if wkb != None else None )
     conn.create_function('st_Buffer', 2, lambda wkb,dist: Geometry(wkb).buffer(dist).dump_wkb() if wkb != None else None )
     
@@ -301,7 +303,12 @@ class Geometry(object):
         pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
         return pointbox
 
-    def box2d_expand(self, units):
+    def envelope(self):
+        xmin,ymin,xmax,ymax = self.bbox()
+        polygon = Geometry(Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)]).wkb)
+        return polygon
+
+    def expand(self, units):
         xmin,ymin,xmax,ymax = self.bbox()
         w = xmax-xmin
         h = ymax-ymin
@@ -359,6 +366,21 @@ class Geometry(object):
         pass
 
     def as_raster(self, *args):
+        '''
+        Group 1:
+            Variant 1:
+                width, height, pixeltype, [value=1, nodataval=0, upperleftx=NULL, upperlefty=NULL, skewx=0, skewy=0]
+        Group 2:
+            Variant 2:
+                ...
+            Variant 3:
+                scalex, scaley, pixeltype, [value=1, nodataval=0, upperleftx=NULL, upperlefty=NULL, skewx=0, skewy=0]
+        Group 3:
+            Variant 4:
+                ...
+            Variant 5:
+                width, height, pixeltype, [value=1, nodataval=0, upperleftx=NULL, upperlefty=NULL, skewx=0, skewy=0
+        '''
         from ..raster.raster import Raster, make_empty_raster
 
         # parse args
