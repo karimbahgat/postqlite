@@ -3,7 +3,7 @@ from sqlite3 import Binary
 
 from shapely.wkb import loads as wkb_loads
 from shapely.wkt import loads as wkt_loads
-from shapely.geometry import asShape, Point, MultiPoint, box
+from shapely.geometry import asShape, Point, MultiPoint, Polygon, box
 from shapely.ops import unary_union
 
 from struct import unpack, unpack_from

@@ -18,7 +18,7 @@ geom._shp = shp
 geoms = ((geom,geom) for _ in xrange(100))
 cur.executemany('insert into test values (?,?)', geoms)
 
-
+fdsdf
 #################
 # constructors
 

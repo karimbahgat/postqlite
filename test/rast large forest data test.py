@@ -6,10 +6,10 @@ import pythongis as pg
 from PIL import Image
 
 print 'init'
-db = postqlite.connect('foresttest.db')
+db = postqlite.connect('testdata/foresttest.db')
 cur = db.cursor()
 
-if True:
+if False:
     # init
     cur.execute('create table forest (file text, rast rast)')
     cur.execute('create table countries (name text, geom geom)')
@@ -40,6 +40,12 @@ if True:
 # check full
 print 'forest', cur.execute('select count(oid) from forest').fetchone()
 print 'countries', cur.execute('select count(oid) from countries').fetchone()
+
+for row in cur.execute('''select name from forest,countries
+                            where st_intersects(geom, rt_envelope(rast))
+                            limit 10
+                            '''):
+    print row
 
 for row in cur.execute('''select countries.name, rt_summarystatsAgg(forest.rast, 1)
                             from forest,countries
