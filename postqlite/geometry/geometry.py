@@ -10,6 +10,7 @@ from struct import unpack, unpack_from
 from io import BytesIO
 from itertools import islice
 import json
+import math
 
 
 def _wkb_byteorder(wkb):
@@ -405,10 +406,36 @@ class Geometry(object):
             nodataval = getarg(args, 3, 0)
             
         # GROUP 2: set params, autocalc width/height
-##        elif isinstance(args[0], float) and isinstance(args[2], float):
+        elif isinstance(args[0], float) and isinstance(args[2], float):
 ##            # double precision scalex, double precision scaley, double precision gridx, double precision gridy, text pixeltype, double precision value=1, double precision nodataval=0, double precision skewx=0, double precision skewy=0, boolean touched=false
 ##            # aligns upperleft to gridx/y
-##            pass
+            scaleX,scaleY,gridX,gridY = args[:4]
+            pixeltype = args[4]
+            value = getarg(args, 5, 1) 
+            nodataval = getarg(args, 6, 0) 
+            skewX = getarg(args, 7, 0.0) 
+            skewY = getarg(args, 8, 0.0)
+
+            xmin,ymin,xmax,ymax = self.bbox()
+            width = abs(xmax-xmin) / float(scaleX)
+            height = abs(ymax-ymin) / float(scaleY)
+            width = int(round(abs(width)))
+            height = int(round(abs(height)))
+
+            from affine import Affine
+            upperLeftX = xmin if scaleX > 0 else xmax
+            upperLeftY = ymin if scaleY > 0 else ymax
+            aff = Affine(scaleX,skewX,upperLeftX, skewY,scaleY,upperLeftY)
+            gridCol,gridRow = (~aff) * (gridX,gridY) # predict pixel of gridx,gridy
+            gridX2,gridY2 = aff * (math.floor(gridCol), math.floor(gridRow)) # use whole pixel to predict gridx,gridy
+            upperLeftX,upperLeftY = upperLeftX - (gridX2-gridX), upperLeftY - (gridY2-gridY) # use actual and predicted gridx,gridy to adjust upperleft geom extent
+
+            #print 'bbox',xmin,ymin,xmax,ymax
+            #print 'grid align',gridX,gridY,gridCol,gridRow,gridX2,gridY2
+            #print 'asrast params',width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY
+            
+            ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
+            
         elif isinstance(args[0], float) and isinstance(args[2], basestring):
             # double precision scalex, double precision scaley, text pixeltype, double precision value=1, double precision nodataval=0, double precision upperleftx=NULL, double precision upperlefty=NULL, double precision skewx=0, double precision skewy=0, boolean touched=false
             # uses upperleft
@@ -420,17 +447,38 @@ class Geometry(object):
             upperLeftY = getarg(args, 6, ymax) # flipped y by default
             skewX = getarg(args, 7, 0.0) 
             skewY = getarg(args, 8, 0.0) 
-            width = abs(xmax-upperLeftX) / float(scaleX)
-            height = abs(upperLeftY-ymin) / float(scaleY)
+            width = abs(xmax-xmin) / float(scaleX)
+            height = abs(ymax-ymin) / float(scaleY)
             width = int(round(abs(width)))
             height = int(round(abs(height)))
+            
             ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
             
         # GROUP 3: set width/height, autocalc params
-##        elif isinstance(args[0], int) and isinstance(args[2], float):
-##            # integer width, integer height, double precision gridx, double precision gridy, text pixeltype, double precision value=1, double precision nodataval=0, double precision skewx=0, double precision skewy=0, boolean touched=false
-##            # aligns upperleft to gridx/y
-##            width,height,pixeltype = ...
+        elif isinstance(args[0], int) and isinstance(args[2], float):
+            # integer width, integer height, double precision gridx, double precision gridy, text pixeltype, double precision value=1, double precision nodataval=0, double precision skewx=0, double precision skewy=0, boolean touched=false
+            # aligns upperleft to gridx/y            
+            width,height,gridX,gridY = args[:4]
+            pixeltype = args[4]
+            value = getarg(args, 5, 1) 
+            nodataval = getarg(args, 6, 0) 
+            skewX = getarg(args, 7, 0.0) 
+            skewY = getarg(args, 8, 0.0)
+
+            xmin,ymin,xmax,ymax = self.bbox()
+            scaleX = abs(xmax-xmin) / float(width)
+            scaleY = abs(ymax-ymin) / float(height) * -1 # flipped y by default (since we only width,height,upperleft, no way to know what direction crs goes)
+
+            from affine import Affine
+            upperLeftX = xmin if scaleX > 0 else xmax
+            upperLeftY = ymin if scaleY > 0 else ymax
+            aff = Affine(scaleX,skewX,upperLeftX, skewY,scaleY,upperLeftY)
+            gridCol,gridRow = (~aff) * (gridX,gridY) # predict pixel of gridx,gridy
+            gridX2,gridY2 = aff * (math.floor(gridCol), math.floor(gridRow)) # use whole pixel to predict gridx,gridy
+            upperLeftX,upperLeftY = upperLeftX - (gridX2-gridX), upperLeftY - (gridY2-gridY) # use actual and predicted gridx,gridy to adjust upperleft geom extent
+
+            ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
+
         elif isinstance(args[0], int) and isinstance(args[2], basestring):
             # integer width, integer height, text pixeltype, double precision value=1, double precision nodataval=0, double precision upperleftx=NULL, double precision upperlefty=NULL, double precision skewx=0, double precision skewy=0, boolean touched=false
             # uses upperleft
@@ -442,9 +490,11 @@ class Geometry(object):
             upperLeftY = getarg(args, 6, ymax) # flipped y by default
             skewX = getarg(args, 7, 0.0) 
             skewY = getarg(args, 8, 0.0) 
-            scaleX = abs(xmax-upperLeftX) / float(width)
-            scaleY = abs(upperLeftY-ymin) / float(height) * -1 # flipped y by default
+            scaleX = abs(xmax-xmin) / float(width)
+            scaleY = abs(ymax-ymin) / float(height) * -1 # flipped y by default
+            
             ref = make_empty_raster(width, height, upperLeftX, upperLeftY, scaleX, scaleY, skewX, skewY)
+            
         else:
             raise Exception('Invalid function args: {}'.format(args))
 

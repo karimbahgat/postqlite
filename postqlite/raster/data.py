@@ -173,7 +173,7 @@ class Raster(object):
         else:
             px1,py1,px2,py2 = bbox
 
-        print bbox, '-->', [px1,py1,px2,py2]
+        #print bbox, '-->', [px1,py1,px2,py2]
 
         # do bounds check
         pxmin = min(px1,px2)

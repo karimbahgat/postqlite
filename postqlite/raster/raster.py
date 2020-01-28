@@ -10,7 +10,7 @@ from shapely.geometry import Point, MultiPoint, Polygon
 from PIL import Image
 
 from .load import file_reader
-from ..vector.geometry import Geometry
+from ..geometry.geometry import Geometry
 
 from wkb_raster import write_wkb_raster
 
@@ -20,7 +20,7 @@ from wkb_raster import write_wkb_raster
 # ... with separate functions for each that detects vector vs raster and calls the corresponding func/agg
 # 3 (DONE): Add geometry burning function, asRaster() using basic PIL drawing
 # 4: Figure out correct wkb handling (keep it as sqlite's read-write buffer? does that change the underlaying db data? how to create own read-write buffer?)
-# 5: Make an interactive tk app for writing sql directly
+# 5 (DONE): Make an interactive tk app for writing sql directly
 # 6: Fix geometry asRaster() extent direction bug...
 # ... 
 
@@ -1105,25 +1105,15 @@ class Raster(object):
             if extenttype == 'first':
                 ipX,ipY = self.upperLeftX,self.upperLeftY
                 width,height = self.width,self.height
-                # unless specified, first will only include pixels where rast1 is valid
-##                if not nodata1expr:
-##                    nodata1expr = str(nodatanodataval)
-##                if not nodata2expr:
-##                    nodata2expr = '[rast1]'
                 
             elif extenttype == 'second':
                 ipX,ipY = rast2.upperLeftX,rast2.upperLeftY
                 width,height = rast2.width,rast2.height
-                # unless specified, second will only include pixels where rast2 is valid
-##                if not nodata1expr:
-##                    nodata1expr = '[rast2]'
-##                if not nodata2expr:
-##                    nodata2expr = str(nodatanodataval)
                 
             elif extenttype == 'intersection':
                 # get intersection of coord bboxes
-                box1 = self.envelope()
-                box2 = rast2.envelope()
+                box1 = self.convex_hull()
+                box2 = rast2.convex_hull()
                 if box1.intersects(box2):
                     box = box1.intersection(box2)
                 else:
@@ -1132,8 +1122,9 @@ class Raster(object):
                     # or return zero width/height raster? 
                     return None
                 # calculate rast1 pixel positions for the intersected bbox
-                xmin,ymin,xmax,ymax = box.bbox()
-                corners = [(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin)]
+                corners = box.as_GeoJSON()['coordinates'][0]
+                xs,ys = zip(*corners)
+                xmin,ymin,xmax,ymax = min(xs),min(ys),max(xs),max(ys)
                 pixelcorners = [self.world_to_raster_coord(x,y).as_GeoJSON()['coordinates'] for x,y in corners]
                 pxs,pys = zip(*pixelcorners)
                 pxmin,pymin,pxmax,pymax = min(pxs),min(pys),max(pxs),max(pys)
@@ -1141,36 +1132,27 @@ class Raster(object):
                 upperLeftY = ymin if self.scaleY > 0 else ymax
                 # calculate new georef from these pixel positions
                 ipX,ipY = upperLeftX,upperLeftY 
-                width = pxmax-pxmin
-                height = pymax-pymin
-                # unless specified, intersection will not include pixels where only one raster is valid
-##                if not nodata1expr:
-##                    nodata1expr = str(nodatanodataval)
-##                if not nodata2expr:
-##                    nodata2expr = str(nodatanodataval)
+                width = pxmax-pxmin + 1
+                height = pymax-pymin + 1
                 
             elif extenttype == 'union':
                 # get union of coord bboxes
-                box1 = self.box2d()
-                box2 = rast2.box2d()
+                box1 = self.convex_hull()
+                box2 = rast2.convex_hull()
                 box = box1.union(box2)
                 # calculate rast1 pixel positions for the intersected bbox
-                xmin,ymin,xmax,ymax = box.bbox()
-                corners = [(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin)]
+                corners = box.as_GeoJSON()['coordinates'][0]
+                xs,ys = zip(*corners)
+                xmin,ymin,xmax,ymax = min(xs),min(ys),max(xs),max(ys)
                 pixelcorners = [self.world_to_raster_coord(x,y).as_GeoJSON()['coordinates'] for x,y in corners]
                 pxs,pys = zip(*pixelcorners)
                 pxmin,pymin,pxmax,pymax = min(pxs),min(pys),max(pxs),max(pys)
                 upperLeftX = xmin if self.scaleX > 0 else xmax
                 upperLeftY = ymin if self.scaleY > 0 else ymax
                 # calculate new georef from these pixel positions
-                ipX,ipY = upperLeftX,upperLeftY 
-                width = pxmax-pxmin
-                height = pymax-pymin
-                # unless specified, union will include pixels where any of the rasters are valid
-##                if not nodata1expr:
-##                    nodata1expr = '[rast2]'
-##                if not nodata2expr:
-##                    nodata2expr = '[rast1]'
+                ipX,ipY = upperLeftX,upperLeftY
+                width = pxmax-pxmin + 1
+                height = pymax-pymin + 1
 
             width,height = int(width),int(height)
             
@@ -1204,121 +1186,156 @@ class Raster(object):
             # write band headers
             wkb += self._write_band_header(bandhead)
 
+            ####
             # create raster for new extent
             frame = make_empty_raster(width, height, ipX, ipY, self.scaleX, self.scaleY, self.skewX, self.skewY)
             frame_result = np.ones((height,width), dtype=pixeltype) * nodatanodataval # prefilled with nodatanodataval
-            frame_result = Image.fromarray(frame_result.astype(pixeltype))
+            #print 'frame size', frame_result.shape
 
+            ####
             # reframe array 1
             arr1 = self.data(nband1)
             arr1 = arr1.astype(np.dtype(pixeltype))
+            #print 'arr1 size', arr1.shape
+
+            # clip array to paste within frame bounds
+            ulX,ulY = frame.raster_to_world_coord(0, 0).as_GeoJSON()['coordinates']
+            pasteStartX1,pasteStartY1 = self.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            ulX,ulY = frame.raster_to_world_coord(frame.width-1, frame.height-1).as_GeoJSON()['coordinates']
+            pasteEndX1,pasteEndY1 = self.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            # cap
+            pasteStartX1,pasteStartY1 = max(0, pasteStartX1), max(0, pasteStartY1)
+            pasteEndX1,pasteEndY1 = min(self.width - 1, pasteEndX1), min(self.height - 1, pasteEndY1)
+            #print 'arr1paste', pasteStartY1,pasteEndY1, pasteStartX1,pasteEndX1
+            pasteStartX1,pasteStartY1,pasteEndX1,pasteEndY1 = map(int, (pasteStartX1,pasteStartY1,pasteEndX1,pasteEndY1))
+            
+            arr1clip = arr1[pasteStartY1:pasteEndY1 + 1, pasteStartX1:pasteEndX1 + 1]
+
+            # determine area of frame to paste into
             ulX,ulY = self.raster_to_world_coord(0, 0).as_GeoJSON()['coordinates']
-            startX1,startY1 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            frameStartX1,frameStartY1 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            ulX,ulY = self.raster_to_world_coord(self.width-1, self.height-1).as_GeoJSON()['coordinates']
+            frameEndX1,frameEndY1 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            # cap
+            frameStartX1,frameStartY1 = max(0, frameStartX1), max(0, frameStartY1)
+            frameEndX1,frameEndY1 = min(frame.width - 1, frameEndX1), min(frame.height - 1, frameEndY1)
+            #print 'arr1 pos in frame',frameStartX1,frameStartY1,frameEndX1,frameEndY1
+            frameStartX1,frameStartY1,frameEndX1,frameEndY1 = map(int, (frameStartX1,frameStartY1,frameEndX1,frameEndY1))
+            
+            arr1frame = ma.array(np.zeros((height,width), dtype=pixeltype), mask=True)
+            arr1frame[frameStartY1:frameEndY1 + 1, frameStartX1:frameEndX1 + 1] = arr1clip
+            arr1frame.mask[frameStartY1:frameEndY1 + 1, frameStartX1:frameEndX1 + 1] = arr1clip.mask
+            
             # calc nodata2 value
             #print 'arr1 pixel bounds',startX1,startY1, startX1+self.width, startY1+self.height
             if nodata2expr:
+                
+                # calculate paste value
                 pyexpr = nodata2expr.lower()
                 pyexpr = pyexpr.replace('[rast1]','rast1')
-                locenv = {'rast1': arr1}
+                locenv = {'rast1': arr1frame}
                 nodata2_result = eval(pyexpr, {}, locenv)
                 if isinstance(nodata2_result, (float,int)):
                     # constant
-                    arr1_paste = np.ones(arr1.shape, dtype=arr1.dtype) * nodata2_result
+                    arr1_paste = np.ones(arr1frame.shape, dtype=arr1frame.dtype) * nodata2_result
                 else:
                     # array
                     arr1_paste = nodata2_result
-                arr1_paste = arr1_paste.astype(pixeltype)
-                # im paste
-                if arr1.mask is False:
-                    frame_result.paste(Image.fromarray(arr1_paste), (int(startX1),int(startY1)))
-                else:
-                    maskim1 = Image.fromarray((~arr1.mask).astype('u1')*255, mode='L')
-                    frame_result.paste(Image.fromarray(arr1_paste), (int(startX1),int(startY1)), mask=maskim1)
-            # array paste
-            #arr1dum = np.zeros((height,width), dtype=bool)
-            #arr1dum[int(startY1):int(startY1+self.height), int(startX1):int(startX1+self.width)] = True
-            # im crop
-            #offx1,offy1 = self.world_to_raster_coord(ipX, ipY).as_GeoJSON()['coordinates']
-            #im1 = Image.fromarray(arr1).crop((offx1,offy1,offx1+width,offy1+height))
-            #arr1 = np.array(im1)
+                #arr1_paste = arr1_paste.astype(pixeltype)
 
+                # insert clipped array into frame subslice
+                #frame_result[~arr1frame.mask] = arr1_paste
+                frame_result = np.where(arr1frame.mask, frame_result, arr1_paste)
+
+            ####
             # reframe array 2
             arr2 = rast2.data(nband2)
             arr2 = arr2.astype(np.dtype(pixeltype))
+            #print 'arr2 size', arr2.shape
+
+            # clip array to paste within frame bounds
+            ulX,ulY = frame.raster_to_world_coord(0, 0).as_GeoJSON()['coordinates']
+            pasteStartX2,pasteStartY2 = rast2.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            ulX,ulY = frame.raster_to_world_coord(frame.width-1, frame.height-1).as_GeoJSON()['coordinates']
+            pasteEndX2,pasteEndY2 = rast2.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            # cap
+            pasteStartX2,pasteStartY2 = max(0, pasteStartX2), max(0, pasteStartY2)
+            pasteEndX2,pasteEndY2 = min(rast2.width - 1, pasteEndX2), min(rast2.height - 1, pasteEndY2)
+            #print 'arr2paste', pasteStartY2,pasteEndY2, pasteStartX2,pasteEndX2
+            pasteStartX2,pasteStartY2,pasteEndX2,pasteEndY2 = map(int, (pasteStartX2,pasteStartY2,pasteEndX2,pasteEndY2))
+            
+            arr2clip = arr2[pasteStartY2:pasteEndY2 + 1, pasteStartX2:pasteEndX2 + 1]
+
+            # determine area of frame to paste into
             ulX,ulY = rast2.raster_to_world_coord(0, 0).as_GeoJSON()['coordinates']
-            startX2,startY2 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            frameStartX2,frameStartY2 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            ulX,ulY = rast2.raster_to_world_coord(rast2.width-1, rast2.height-1).as_GeoJSON()['coordinates']
+            frameEndX2,frameEndY2 = frame.world_to_raster_coord(ulX, ulY).as_GeoJSON()['coordinates']
+            # cap
+            frameStartX2,frameStartY2 = max(0, frameStartX2), max(0, frameStartY2)
+            frameEndX2,frameEndY2 = min(frame.width - 1, frameEndX2), min(frame.height - 1, frameEndY2)
+            #print 'arr2 pos in frame',frameStartX2,frameStartY2,frameEndX2,frameEndY2
+            frameStartX2,frameStartY2,frameEndX2,frameEndY2 = map(int, (frameStartX2,frameStartY2,frameEndX2,frameEndY2))
+            
+            arr2frame = ma.array(np.zeros((height,width), dtype=pixeltype), mask=True)
+            arr2frame[frameStartY2:frameEndY2 + 1, frameStartX2:frameEndX2 + 1] = arr2clip
+            arr2frame.mask[frameStartY2:frameEndY2 + 1, frameStartX2:frameEndX2 + 1] = arr2clip.mask
+
+##            print frame.metadata()
+##            print self.metadata()
+##            print 'pastecoords',pasteStartX1,pasteStartY1,pasteEndX1,pasteEndY1
+##            print arr1clip.shape,arr1clip
+##            print arr2clip.shape,arr2clip
+##            Image.fromarray(arr1clip).show()
+##            Image.fromarray(arr2clip).show()
+##            Image.fromarray(arr1frame).show()
+##            Image.fromarray(arr1frame.mask*255).show()
+##            Image.fromarray(arr2frame).show()
+##            Image.fromarray(arr2frame.mask*255).show()
+            
             # calc nodata1 value
             #print 'arr2 pixel bounds',startX2,startY2, startX2+rast2.width, startY2+rast2.height
             if nodata1expr:
+                
+                # calculate paste value
                 pyexpr = nodata1expr.lower()
                 pyexpr = pyexpr.replace('[rast2]','rast2')
-                locenv = {'rast2': arr2}
+                locenv = {'rast2': arr2frame}
                 nodata1_result = eval(pyexpr, {}, locenv)
                 if isinstance(nodata1_result, (float,int)):
                     # constant
-                    arr2_paste = np.ones(arr2.shape, dtype=arr2.dtype) * nodata1_result
+                    arr2_paste = np.ones(arr2frame.shape, dtype=arr2frame.dtype) * nodata1_result
                 else:
                     # array
                     arr2_paste = nodata1_result
-                arr2_paste = arr2_paste.astype(pixeltype)
-                # im paste
-                if arr2.mask is False:
-                    frame_result.paste(Image.fromarray(arr2_paste), (int(startX2),int(startY2)))
-                else:
-                    maskim2 = Image.fromarray((~arr2.mask).astype('u1')*255, mode='L') # invert mask for PIL
-                    frame_result.paste(Image.fromarray(arr2_paste), (int(startX2),int(startY2)), mask=maskim2)
-            # array paste
-            #arr2dum = np.zeros((height,width), dtype=bool)
-            #arr2dum[int(startY2):int(startY2+rast2.height), int(startX2):int(startX2+rast2.width)] = True
-            # im crop
-            #offx2,offy2 = rast2.world_to_raster_coord(ipX, ipY).as_GeoJSON()['coordinates']
-            #im2 = Image.fromarray(arr2).crop((offx2,offy2,offx2+width,offy2+height))
-            #arr2 = np.array(im2)
+                #arr2_paste = arr2_paste.astype(pixeltype)
 
-            # first paste each array onto frame
-            #frame_result[int(startY1):int(startY1+self.height), int(startX1):int(startX1+self.width)] = arr1
-            #frame_result[int(startY2):int(startY2+rast2.height), int(startX2):int(startX2+rast2.width)] = arr2
+                # insert clipped array into frame subslice
+                #frame_result[~arr2frame.mask] = arr2_paste
+                frame_result = np.where(arr2frame.mask, frame_result, arr2_paste)
 
-            #frame_result.show()
+            # determine intersecting pixels mask
+            isec_mask = np.zeros(frame_result.shape, dtype=bool)
+            if arr1frame.mask is not False:
+                isec_mask = isec_mask | arr1frame.mask
+            if arr2frame.mask is not False:
+                isec_mask = isec_mask | arr2frame.mask
 
-            # get coords of the intersecting parts (this is where the expression will be applied)
-            startX,endX = max(startX1,startX2),min(startX1+self.width,startX2+rast2.width)
-            startY,endY = max(startY1,startY2),min(startY1+self.height,startY2+rast2.height)
-            xmin,ymin = frame.raster_to_world_coord(startX,startY).as_GeoJSON()['coordinates']
-            xmax,ymax = frame.raster_to_world_coord(endX,endY).as_GeoJSON()['coordinates']
+##            Image.fromarray(arr1frame.mask*255).show()
+##            Image.fromarray(arr2frame.mask*255).show()
+##            #Image.fromarray(frame_result).show()
+##            Image.fromarray(isec_mask*255).show()
 
             # expression is only for the pixels that intersect
             # threefore only run expression if the two rasters overlap in the common grid
-            #frameisec = arr1dum & arr2dum
-            if (endX-startX) > 0 and (endY-startY) > 0:
+            if np.any(~isec_mask):
                 #print 'isec pixel bounds', startX, startY, endX, endY
-
-                # clip arr1 to intersecting region
-                pxmin1,pymin1 = self.world_to_raster_coord(xmin,ymin).as_GeoJSON()['coordinates']
-                pxmax1,pymax1 = self.world_to_raster_coord(xmax,ymax).as_GeoJSON()['coordinates']
-                pxmin1,pymin1,pxmax1,pymax1 = max(pxmin1,0),max(pymin1,0),min(pxmax1,self.width),min(pymax1,self.height)
-                pxmin1,pymin1,pxmax1,pymax1 = map(int, [pxmin1,pymin1,pxmax1,pymax1])
-                #print 'arr1 subset',pxmin1,pymin1,pxmax1,pymax1
-                arr1clip = arr1[pymin1:pymax1, pxmin1:pxmax1]
-
-                # clip arr2 to intersecting region
-                pxmin2,pymin2 = rast2.world_to_raster_coord(xmin,ymin).as_GeoJSON()['coordinates']
-                pxmax2,pymax2 = rast2.world_to_raster_coord(xmax,ymax).as_GeoJSON()['coordinates']
-                pxmin2,pymin2,pxmax2,pymax2 = max(pxmin2,0),max(pymin2,0),min(pxmax2,self.width),min(pymax2,self.height)
-                pxmin2,pymin2,pxmax2,pymax2 = map(int, [pxmin2,pymin2,pxmax2,pymax2])
-                #print 'arr2 subset',pxmin2,pymin2,pxmax2,pymax2
-                arr2clip = arr2[pymin2:pymax2, pxmin2:pxmax2]
-
-                # determine intersecting pixels mask
-                isec_mask = np.zeros(arr1clip.shape, dtype=bool)
-                if arr1clip.mask is not False:
-                    isec_mask = isec_mask | arr1clip.mask
-                if arr2clip.mask is not False:
-                    isec_mask = isec_mask | arr2clip.mask
 
                 # set environment
                 #print 'isec dims',arr1clip.shape,arr2clip.shape
-                locenv = {'rast1': arr1clip, 'rast2': arr2clip, 'np': np}
+                arr1frame.mask = isec_mask
+                arr2frame.mask = isec_mask
+                locenv = {'rast1': arr1frame, 'rast2': arr2frame, 'np': np}
 
                 # parse expression
                 expression = expression.lower()
@@ -1354,10 +1371,10 @@ class Raster(object):
                     whenpart,elsepart = expression.split(' else ')
                     
                     whens = whenpart.split(' when ')
-                    when_cumul = np.zeros(arr1clip.shape, dtype=bool)
+                    when_cumul = np.zeros(frame_result.shape, dtype=bool)
 
                     # isect result starts out as fully masked array of nodatanodataval
-                    isec_result = ma.array(np.ones(arr1clip.shape, dtype=pixeltype) * nodatanodataval, mask=isec_mask)
+                    isec_result = np.ones(frame_result.shape, dtype=pixeltype) * nodatanodataval
                     
                     #when_cumul = np.zeros((height,width), dtype=bool)
                     #arr_result = np.zeros((height,width), dtype=pixeltype)
@@ -1397,32 +1414,28 @@ class Raster(object):
                     isec_calc = eval(pyexpr, {}, locenv)
                     if isinstance(isec_calc, (float,int)):
                         # constant
-                        isec_arr = np.ones(arr1clip.shape, dtype=arr1.dtype) * isec_calc
+                        isec_result = np.ones(frame_result.shape, dtype=arr1.dtype) * isec_calc
                     else:
                         # array
-                        isec_arr = isec_calc
-                    isec_result = ma.array(isec_arr, mask=isec_mask)
+                        isec_result = isec_calc
 
                 # paste final expression results onto the intersecting region
-                #frame_result[frameisec] = isec_result
-                maskim = Image.fromarray((~isec_mask).astype('u1')*255, mode='L') # invert mask for PIL
-                frame_result.paste(Image.fromarray(isec_result), (int(startX),int(startY)), mask=maskim)
-
-
-            # TODO: special handling if nodata1expr or nodata2expr specified
-            # ...
-
-            frame_result = np.array(frame_result) # nodata is already encoded in the image/array
-                    
+                #frame_result[~isec_mask] = isec_result
+                #Image.fromarray(frame_result).show()
+                #Image.fromarray(isec_mask*255).show()
+                #Image.fromarray(isec_result).show()
+                frame_result = np.where(isec_mask, frame_result, isec_result)
+                
             # byteswap
             #if endianFmt != arr_result.dtype.byteorder:
             #    # TODO: HANDLE NATIVE BYTEORDER, IE '='
             #    arr_result = arr_result.byteswap()
 
             # write arr result
+            frame_result = frame_result.astype(pixeltype)
             databytes = frame_result.tostring()
             wkb += databytes
-
+            
 
         wkb_buf = buffer(wkb)
         rast = Raster(wkb_buf)
@@ -1556,11 +1569,11 @@ class Raster(object):
         # rasterize the geom to be used as the clipper
         if crop:
             # only need to rasterize within the intersection of rast and geom
-            # NOTE: for now just rasterize entire geom, will be clipped correctly in next step
+            # NOTE: for now just rasterize entire geom aligned, will be clipped correctly in next step
             # scalex, scaley, pixeltype, [value=1, nodataval=0, upperleftx=NULL, upperlefty=NULL, skewx=0, skewy=0]
-            georast = geom.as_raster(self.scaleX, self.scaleY, 'u1',
-                                     255, None, # value,nodata
-                                     self.upperLeftX, self.upperLeftY, # to ensure alignment? 
+            georast = geom.as_raster(self.scaleX, self.scaleY,
+                                     self.upperLeftX, self.upperLeftY, # gridx,grid (ensures alignment)
+                                     'u1', 255, 0, # pixtype,value,nodata
                                      self.skewX, self.skewY,
                                      )
 
@@ -1568,7 +1581,7 @@ class Raster(object):
             # only need to rasterize within the extent of rast
             # refraster, pixeltype, [value=1, nodataval=0]
             ref = self
-            georast = geom.as_raster(ref, 'u1', 255)
+            georast = geom.as_raster(ref, 'u1', 255, 0)
 
         #Image.fromarray(georast.data()).show()
 
@@ -1576,19 +1589,23 @@ class Raster(object):
         if crop:
             # crop to the intersection of rast and geom
             # band1, rast2, band2, [nodataval=NULL]
-            clipped = self.intersection(nband, georast, 1, nodataval)
-##            clipped = self.mapalgebra(nband, georast, 1, '[rast1]',
-##                                      None, 'intersection',
-##                                      None, None, nodataval)
+            #clipped = self.intersection(nband, georast, 1, nodataval)
+            #print 'self',self.metadata()
+            #print 'georast',georast.metadata()
+            #print 'nd',georast.nodataval(1)
+            clipped = self.mapalgebra(nband, georast, 1, '[rast1]',
+                                      None, 'intersection',
+                                      None, None, nodataval)
 
         else:
             # gets same extent as rast
             # nband1, rast2, nband2, expression, [text pixeltype=NULL, text extenttype=INTERSECTION, text nodata1expr=NULL, text nodata2expr=NULL, double precision nodatanodataval=NULL]
-            print 'nd',georast.nodataval(1)
+            #print 'self',self.metadata()
+            #print 'georast',georast.metadata()
+            #print 'nd',georast.nodataval(1)
             clipped = self.mapalgebra(nband, georast, 1, '[rast1]',
-                                      None, 'first')
-                                      #None, 'first',
-                                      #str(nodataval), str(nodataval), nodataval)
+                                      None, 'first',
+                                      None, None, nodataval)
 
         return clipped
 

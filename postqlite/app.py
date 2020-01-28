@@ -8,7 +8,7 @@ import traceback
 
 #from . import ops
 #from . import stats
-from .vector import geometry
+from .geometry import geometry
 from .raster import raster
 
 
@@ -36,10 +36,12 @@ class SQLiteApp(tk2.Tk):
 
         self.connect(':memory:')
 
+        # bindings
         def dndfunc(event):
             filepath = list(event.data)[0]
             self.connect(filepath)
         self.winfo_toplevel().bind_dnddrop(dndfunc, "Files", event='<Drop>')
+        self.winfo_toplevel().bind('<Control-d>', lambda e: self.query.run())
 
         self.state('zoomed')
 
@@ -168,21 +170,48 @@ class QueryEditor(tk2.basics.Label):
             # execute
             t = time()
             req = self.app.db.cursor().execute(sql)
+            # reset
+            tree = self.app.browser.table.tree
+            tree.delete(*tree.get_children())
+            # set fields
+            fields = [item[0] for item in req.description]
+            tree["columns"]=tuple(fields)
+            # populate table rows
             maxrows = 1000
-            rows = []
-            for i,r in enumerate(req):
-                if len(rows) < maxrows:
-                    rows.append(r)
+            for i,row in enumerate(req):
+                tid = tree.insert("", "end", text=i+1, values=row)
+                if i+1 >= maxrows:
+                    break
+            # finish rest of query
+            itot = i+1
+            for row in req:
+                itot += 1
             elaps = time() - t
             msg = 'Query completed in {} seconds'.format(round(elaps,6))
-            msg += '\n' + 'Resulted in {} rows of data'.format(i+1)
-            if i+1 > len(rows):
-                msg += '\n' + 'Showing only first {}'.format(len(rows))
+            msg += '\n' + 'Resulted in {} rows of data'.format(itot)
+            if itot > (i+1):
+                msg += '\n' + 'Showing only first {}'.format(i+1)
             self.log.log(msg, 'normal')
             
-            # populate table
-            fields = [item[0] for item in req.description]
-            self.app.browser.table.populate(fields, rows)
+##            # execute
+##            t = time()
+##            req = self.app.db.cursor().execute(sql)
+##            maxrows = 1000
+##            rows = []
+##            for i,r in enumerate(req):
+##                if len(rows) < maxrows:
+##                    rows.append(r)
+##            elaps = time() - t
+##            msg = 'Query completed in {} seconds'.format(round(elaps,6))
+##            msg += '\n' + 'Resulted in {} rows of data'.format(i+1)
+##            if i+1 > len(rows):
+##                msg += '\n' + 'Showing only first {}'.format(len(rows))
+##            self.log.log(msg, 'normal')
+##            
+##            # populate table
+##            fields = [item[0] for item in req.description]
+##            self.app.browser.table.populate(fields, rows)
+            
         except:
             # log error
             err = traceback.format_exc()

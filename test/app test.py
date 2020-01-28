@@ -24,7 +24,7 @@ if __name__ == '__main__':
                 continue
             d = postqlite.raster.data.Raster(root+'/'+fil)
             print fil, d
-            for tile in d.tiled(tilesize=(2000,2000)):
+            for tile in d.tiled(tilesize=(250,250)):
                 #print tile
                 wkb = tile.wkb
                 wkbtile = postqlite.raster.raster.Raster(wkb)
@@ -37,6 +37,18 @@ if __name__ == '__main__':
             cur.execute('insert into countries values (?, st_simplify(st_geomfromgeojson(?),0.1))', (name, json.dumps(geoj),) )
 
         db.commit()
+
+    '''
+    select rt_summarystatsagg(rast)
+    from 
+        (
+        select rast    
+        from forest,countries
+        where name = 'Brazil'
+        and st_intersects(geom, rt_envelope(rast))
+        limit 1000
+        )
+    '''
         
     app = postqlite.app.SQLiteApp()
     app.connect(db)

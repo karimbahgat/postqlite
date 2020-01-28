@@ -43,7 +43,7 @@ for tile in d.tiled(tilesize=(500,500)):
     wkbtile = postqlite.raster.raster.Raster(wkb)
     cur.execute('insert into maps values (?, ?)', (fil,wkbtile,) )
 
-d = postqlite.vector.load.from_file("C:\Users\kimok\Desktop\BIGDATA\priocountries\priocountries.shp")
+d = postqlite.geometry.load.from_file("C:\Users\kimok\Desktop\BIGDATA\priocountries\priocountries.shp")
 for row,geoj in d.stream():
     name = row['NAME']
     cur.execute('insert into countries values (?, st_simplify(st_geomfromgeojson(?),0.1))', (name, json.dumps(geoj),) )
@@ -87,7 +87,7 @@ for row in cur.execute('''
                     select name, rt_Clip(rast, geom, 0.0, 1) as "[rast]", rt_Clip(rast, geom, 0.0, 0) as "[rast]", geom, rast
                     from maps,countries
                     where geom is not null and st_intersects(geom, rt_envelope(rast))
-                    limit 3
+                    limit 2
                         '''):
     print row
     name,clip,clip_nocrop,geom,rast = row

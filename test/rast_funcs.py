@@ -290,7 +290,7 @@ for rast1,rast2 in cur.execute("""with cross as (select t1.rast as rast, rt_setU
     print isec.bbox()
     #Image.fromarray(isec.data(1)).show()
 
-print 'intersection 2'
+print 'clip'
 ##for rasterized,intersected in cur.execute('''
 ##                                            select st_asRaster(st_Buffer(st_Point(2000,2000), 500), rast, 'u1', 255) as "[rast]",
 ##                                                    rt_Intersection(st_asRaster(st_Buffer(st_Point(2000,2000), 500), rast, 'u1', 255), rast) as "[rast]"
@@ -308,13 +308,19 @@ for buff,rast in cur.execute('''
     rasterized = buff.as_raster(rast, 'u1', 255)
     intersected = rasterized.intersection(rast, 'band2') #mapalgebra(rast,'max([rast1],[rast2])') #intersection(rast, 'band2')
     
-    arr = rasterized.data(1)
-    #from PIL import Image
-    #Image.fromarray(arr).show()
+##    arr = rasterized.data(1)
+##    from PIL import Image
+##    Image.fromarray(arr).show()
     
-    arr = intersected.data(1)
-    from PIL import Image
-    Image.fromarray(arr).show()
+##    arr = intersected.data(1)
+##    from PIL import Image
+##    Image.fromarray(arr).show()
+
+    rastclip = rast.clip(buff, 0.0, True) # crop
+    Image.fromarray(rastclip.data(1)).show()
+
+    rastclip = rast.clip(buff, 0.0, False) # crop
+    Image.fromarray(rastclip.data(1)).show()
 
 
 
@@ -329,16 +335,16 @@ print 'union aggregate'
 
 # debug
 import cProfile
-#p=cProfile.Profile()
-#p.enable()
+p=cProfile.Profile()
+p.enable()
 agg = postqlite.raster.raster.RT_Union()
 for (rast,) in cur.execute('select rt_setUpperLeft(rast,rt_upperleftx(rast)*0.75,rt_upperlefty(rast)*0.75) as "[rast]" from test'):
     print rast
     agg.step(rast.dump_wkb(), 'sum')
     #Image.fromarray(agg.result.data(1)).show()
 rast = postqlite.raster.raster.Raster(agg.finalize())
-#p.create_stats()
-#p.print_stats('tottime')
+p.create_stats()
+p.print_stats('tottime')
 
 # view
 print rast.metadata()

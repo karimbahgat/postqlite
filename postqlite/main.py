@@ -3,7 +3,7 @@ import sqlite3
 
 #from . import ops
 #from . import stats
-from .vector import geometry
+from .geometry import geometry
 from .raster import raster
 
 
