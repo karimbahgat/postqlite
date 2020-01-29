@@ -22,7 +22,7 @@ cur.execute('create table test (name text, geom geom)')
 
 # populate with real country data
 print 'populate'
-d = postqlite.vector.load.from_file("C:\Users\kimok\Desktop\BIGDATA\priocountries\priocountries.shp")
+d = postqlite.geometry.load.from_file("C:\Users\kimok\Desktop\BIGDATA\priocountries\priocountries.shp")
 for row,geoj in d.stream():
     name = row['NAME']
     cur.execute('insert into test values (?, st_simplify(st_geomfromgeojson(?),0.1))', (name, json.dumps(geoj),) )
@@ -33,7 +33,21 @@ print 'full', cur.execute('select count(oid) from test').fetchone()
 # rasterize all
 # (ie take the st_rasterunion of all st_asraster)
 print 'rasterize all'
-for (rast,) in cur.execute('''select rt_union(st_asRaster(geom,1.0,-1.0,'u1',255,0,round(st_xmin(geom),0),round(st_ymin(geom),0))) as "[rast]" from test where geom is not null limit 30'''):
+for (name,rast,) in cur.execute('''select name,st_asRaster(geom,1.0,-1.0,'u1',255,0) as "[rast]" from test where geom is not null limit 3'''):
+#for (rast,) in cur.execute('''select st_asRaster(geom,1.0,1.0,'u1',255,0,round(st_xmin(geom),0),round(st_ymin(geom),0)) as "[rast]" from test where geom is not null'''):
+##for (geom,) in cur.execute('''select geom from test where geom is not null'''):
+##    print geom
+##    rast = geom.as_raster(1.0,1.0,'u1',255,0,round(geom.bbox()[0],0),round(geom.bbox()[1],0))
+
+    print rast.metadata()    
+    arr = rast.data(1)
+    from PIL import Image
+    Image.fromarray(arr).show()
+
+# rasterize all
+# (ie take the st_rasterunion of all st_asraster)
+print 'rasterize all'
+for (rast,) in cur.execute('''select rt_union(st_asRaster(geom,1.0,-1.0,0.001,0.001,'u1',255,0)) as "[rast]" from test where geom is not null limit 30'''):
 #for (rast,) in cur.execute('''select st_asRaster(geom,1.0,1.0,'u1',255,0,round(st_xmin(geom),0),round(st_ymin(geom),0)) as "[rast]" from test where geom is not null'''):
 ##for (geom,) in cur.execute('''select geom from test where geom is not null'''):
 ##    print geom

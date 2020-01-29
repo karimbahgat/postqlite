@@ -1141,7 +1141,11 @@ class Raster(object):
                 box2 = rast2.convex_hull()
                 box = box1.union(box2)
                 # calculate rast1 pixel positions for the intersected bbox
-                corners = box.as_GeoJSON()['coordinates'][0]
+                geoj = box.as_GeoJSON()
+                if 'Multi' in geoj['type']:
+                    corners = geoj['coordinates'][0][0] + geoj['coordinates'][1][0] # two separate boxes
+                else:
+                    corners = geoj['coordinates'][0]
                 xs,ys = zip(*corners)
                 xmin,ymin,xmax,ymax = min(xs),min(ys),max(xs),max(ys)
                 pixelcorners = [self.world_to_raster_coord(x,y).as_GeoJSON()['coordinates'] for x,y in corners]
@@ -1244,7 +1248,7 @@ class Raster(object):
                 #arr1_paste = arr1_paste.astype(pixeltype)
 
                 # insert clipped array into frame subslice
-                #frame_result[~arr1frame.mask] = arr1_paste
+                #frame_result[~(arr1frame.mask)] = arr1_paste[~(arr1frame.mask)]
                 frame_result = np.where(arr1frame.mask, frame_result, arr1_paste)
 
             ####
@@ -1311,7 +1315,7 @@ class Raster(object):
                 #arr2_paste = arr2_paste.astype(pixeltype)
 
                 # insert clipped array into frame subslice
-                #frame_result[~arr2frame.mask] = arr2_paste
+                #frame_result[~(arr2frame.mask)] = arr2_paste[~(arr2frame.mask)]
                 frame_result = np.where(arr2frame.mask, frame_result, arr2_paste)
 
             # determine intersecting pixels mask
@@ -1420,7 +1424,7 @@ class Raster(object):
                         isec_result = isec_calc
 
                 # paste final expression results onto the intersecting region
-                #frame_result[~isec_mask] = isec_result
+                #frame_result[~isec_mask] = isec_result[~isec_mask]
                 #Image.fromarray(frame_result).show()
                 #Image.fromarray(isec_mask*255).show()
                 #Image.fromarray(isec_result).show()
