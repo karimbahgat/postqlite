@@ -21,7 +21,7 @@ class SQLiteApp(tk2.Tk):
 
         self.top = tk2.Frame(self)
         self.top.pack(side='top', fill='x', expand=1)
-        #self.top.place(relx=0, rely=0, relwidth=1, relheight=0.6)
+        self.top.place(relx=0, relwidth=1, rely=0, relheight=0.6)
 
         self.query = QueryEditor(self.top)
         self.query.pack(side='left', fill='both', expand=1)
@@ -32,16 +32,18 @@ class SQLiteApp(tk2.Tk):
         self.info.app = self
 
         self.bottom = tk2.Frame(self)
-        self.bottom.pack(side='bottom', fill='x', expand=1)
+        #self.bottom.pack(side='bottom', fill='x', expand=1)
+        self.bottom.place(relx=0, relwidth=1, rely=0.6, relheight=0.4)
 
         self.browser = TableBrowser(self.bottom)
-        self.browser.pack(side='left', fill="both", expand=1)
-        #self.browser.place(relx=0, rely=0, relwidth=0.6, relheight=1)
+        #self.browser.pack(side='left', fill="both", expand=1)
+        self.browser.place(relx=0, relwidth=0.6, rely=0, relheight=1)
         self.browser.app = self
 
         self.graphics = GraphicsViewer(self.bottom, width=100)
-        self.graphics.pack(side='right', fill='both', expand=1)
-        #self.browser.place(relx=0.6, rely=0, relwidth=0.4, relheight=1)
+        #self.graphics.pack(side='right', fill='both', expand=1)
+        self.graphics.place(relx=0.6, relwidth=0.4, rely=0, relheight=1)
+        self.graphics.app = self
 
         self.connect(':memory:')
 
@@ -104,7 +106,7 @@ class SQLiteApp(tk2.Tk):
         return columns
 
     def run_sql(self, sql):
-        msg = 'Running query: \n' + sql
+        msg = 'Running query: \n' + sql.strip()
         self.query.log.log_new(msg, 'normal')
         
         try:

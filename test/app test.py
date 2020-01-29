@@ -8,7 +8,7 @@ import json
 if __name__ == '__main__':
 
     print 'init'
-    db = postqlite.connect('testdata/foresttest.db')
+    db = postqlite.connect('testdata/maptest.db')
 
     if False:
         # init
@@ -48,6 +48,13 @@ if __name__ == '__main__':
         and st_intersects(geom, rt_envelope(rast))
         limit 1000
         )
+    '''
+
+    '''
+    select file,name,rt_clip(rast,geom,0.0, 0) as "[rast]"
+    from maps,countries
+    where st_intersects(geom,rt_envelope(rast))
+    limit 30
     '''
         
     app = postqlite.app.SQLiteApp()
