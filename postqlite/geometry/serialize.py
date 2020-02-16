@@ -6,17 +6,18 @@ from .geometry import Geometry
 
 
 
-def create_geom(wkb_buf):
-    # wkb buffer to shapely
-    # TODO: MAYBE HANDLE NONE?
-    geom = Geometry(wkb_buf)
+def create_geom(blob):
+    # from sqlite3 wkb blob to geometry memoryview
+    # py2: memview of buffer, py3: memview of bytes
+    wkb_mem = memoryview(blob)
+    geom = Geometry(wkb_mem)
     return geom
 
-def dump_geom(geom):
-    # geometry class to wkb buffer
-    # TODO: MAYBE HANDLE NONE?
-    wkb_buf = geom.dump_wkb()
-    return wkb_buf
+##def dump_geom(geom):
+##    # geometry memoryview to sqlite3 db blob
+##    # py2: db requires buffer, py3: db requires memview
+##    wkb_mem = geom.dump_wkb()
+##    return Binary(wkb_mem.tobytes())
 
 ##def geoj_to_wkb(geoj):
 ##    # geojson to wkb buffer
@@ -26,5 +27,5 @@ def dump_geom(geom):
 
 
 sqlite3.register_converter('geom', create_geom)
-sqlite3.register_adapter(Geometry, dump_geom)
+sqlite3.register_adapter(Geometry, lambda g: g.dump_wkb() )
 #sqlite3.register_adapter(dict, geoj_to_wkb)

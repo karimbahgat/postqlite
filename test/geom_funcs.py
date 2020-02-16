@@ -1,5 +1,5 @@
 import postqlite
-from postqlite.vector.geometry import Geometry
+from postqlite.geometry.geometry import Geometry
 
 from shapely.geometry import Point, LineString
 
@@ -13,12 +13,10 @@ cur.execute('create table test (geom geom, geom2 geom)')
 print 'inserting'
 #shp = Point(1,1)
 shp = LineString([(1,1) for _ in xrange(10000)])
-geom = Geometry(None)
-geom._shp = shp
+geom = Geometry(shp.wkb)
 geoms = ((geom,geom) for _ in xrange(100))
 cur.executemany('insert into test values (?,?)', geoms)
 
-fdsdf
 #################
 # constructors
 

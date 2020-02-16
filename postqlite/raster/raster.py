@@ -1,9 +1,12 @@
 
+from sqlite3 import Binary
+
 import numpy as np
 import numpy.ma as ma
 import math
 import json
 from struct import unpack_from, pack_into, pack, calcsize
+import sys
 
 from affine import Affine
 from shapely.geometry import Point, MultiPoint, Polygon
@@ -22,7 +25,9 @@ from wkb_raster import write_wkb_raster
 # 4: Figure out correct wkb handling (keep it as sqlite's read-write buffer? does that change the underlaying db data? how to create own read-write buffer?)
 # 5 (DONE): Make an interactive tk app for writing sql directly
 # 6: Fix geometry asRaster() extent direction bug...
-# ... 
+# ...
+
+PY2 = sys.version_info[0] == 2
 
 def register_funcs(conn):
     # see: https://postgis.net/docs/reference.html
@@ -288,13 +293,13 @@ def make_empty_raster(*args):
     wkb += pack('<b', header['endian'])
     wkb += pack(endianFmt + 'HHddddddIHH', *headervals)
 
-    rast = Raster(buffer(wkb))
+    rast = Raster(memoryview(wkb))
     return rast
 
 
 class Raster(object):
     def __init__(self, wkb):
-        self._wkb = wkb
+        self._wkb = memoryview(wkb)
         self._header = None
 
 ##    def __repr__(self):
@@ -435,12 +440,12 @@ class Raster(object):
 
     def box2d(self):
         xmin,ymin,xmax,ymax = self.bbox()
-        pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
+        pointbox = Geometry(shp=MultiPoint([(xmin,ymin),(xmax,ymax)]))
         return pointbox
 
     def envelope(self):
         xmin,ymin,xmax,ymax = self.bbox()
-        polygon = Geometry(Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)]).wkb)
+        polygon = Geometry(shp=Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)]))
         return polygon
 
     def convex_hull(self):
@@ -448,7 +453,7 @@ class Raster(object):
         corners = [(0,0),(0,h-1),(w-1,h-1),(w-1,0)]
         coords = [self.raster_to_world_coord(px,py).as_GeoJSON()['coordinates'] for px,py in corners]
         coords.append(coords[-1])
-        polygon = Geometry(Polygon(coords).wkb)
+        polygon = Geometry(shp=Polygon(coords))
         return polygon
 
     # setting
@@ -518,8 +523,7 @@ class Raster(object):
         x,y = self._affine * (px,py)
 
         shp = Point(x, y)
-        geom = Geometry(shp.wkb)
-        geom._shp = shp
+        geom = Geometry(shp=shp)
         return geom
 
     def world_to_raster_coord(self, x, y):
@@ -529,8 +533,7 @@ class Raster(object):
         px,py = ~self._affine * (x,y)
             
         shp = Point(px, py)
-        geom = Geometry(shp.wkb)
-        geom._shp = shp
+        geom = Geometry(shp=shp)
         return geom
 
     # bands
@@ -680,10 +683,10 @@ class Raster(object):
             #print 'band',repr(bandnum)
             start = self._band_start(bandnum)
             bandsize = self._band_size(start)
-            wkb += self._wkb[start:start+bandsize]
+            wkb += self._wkb[start:start+bandsize].tobytes()
 
-        wkb_buf = buffer(wkb)
-        rast = Raster(wkb_buf)
+        wkb_mem = memoryview(wkb)
+        rast = Raster(wkb_mem)
         return rast
 
     def nodataval(self, band=1):
@@ -763,10 +766,20 @@ class Raster(object):
         
         else:
             width,height = self._header['width'], self._header['height']
-            data = np.ndarray((height, width),
-                              buffer=self._wkb, offset=start+skip,
-                              dtype=np.dtype(dtype)
-                              )
+            if PY2:
+                # py2: ndarray buffer doesnt accept memview
+                # instead extract raw bytes and read from that
+                length = size*width*height
+                offset = start+skip
+                length = size*width*height
+                raw = self._wkb[offset:offset+length].tobytes()
+                data = np.fromstring(raw, dtype=np.dtype(dtype)).reshape((height, width))
+            else:
+                # py3
+                data = np.ndarray((height, width),
+                                  buffer=self._wkb, offset=start+skip,
+                                  dtype=np.dtype(dtype)
+                                  )
             if hasNodataValue:
                 mask = data == nodata
             else:
@@ -879,8 +892,8 @@ class Raster(object):
             databytes = arr_result.tostring()
             wkb += databytes
 
-        wkb_buf = buffer(wkb)
-        rast = Raster(wkb_buf)
+        wkb_mem = memoryview(wkb)
+        rast = Raster(wkb_mem)
         return rast
 
 ##    def rescale(self, *args):
@@ -1441,8 +1454,8 @@ class Raster(object):
             wkb += databytes
             
 
-        wkb_buf = buffer(wkb)
-        rast = Raster(wkb_buf)
+        wkb_mem = memoryview(wkb)
+        rast = Raster(wkb_mem)
         return rast
 
     def intersection(self, *args):
@@ -1780,8 +1793,13 @@ class Raster(object):
 ##        return rast 
     
     def dump_wkb(self):
-        wkb = self._wkb
-        return wkb
+        # raster memoryview to sqlite3 db blob
+        # py2: db requires buffer, py3: db requires memview
+        wkb_mem = self._wkb
+        if PY2:
+            wkb_mem = buffer(wkb_mem.tobytes())
+        return Binary(wkb_mem)
+
 
 
     

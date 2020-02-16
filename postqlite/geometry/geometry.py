@@ -11,6 +11,10 @@ from io import BytesIO
 from itertools import islice
 import json
 import math
+import sys
+
+
+PY2 = sys.version_info[0] == 2
 
 
 def _wkb_byteorder(wkb):
@@ -33,10 +37,10 @@ def register_funcs(conn):
 
     # constructors
     # TODO: maybe make more effective by converting directly, without the shapely overhead
-    conn.create_function('st_Point', 2, lambda x,y: Geometry(Point(x,y).wkb).dump_wkb() )
-    conn.create_function('st_MakeEnvelope', 4, lambda xmin,ymin,xmax,ymax: Geometry(box(xmin,ymin,xmax,ymax).wkb).dump_wkb() )
-    conn.create_function('st_GeomFromText', 1, lambda wkt: Geometry(wkt_loads(wkt).wkb).dump_wkb() )
-    conn.create_function('st_GeomFromGeoJSON', 1, lambda geojstr: Geometry(asShape(json.loads(geojstr)).wkb).dump_wkb() )
+    conn.create_function('st_Point', 2, lambda x,y: Geometry(shp=Point(x,y)).dump_wkb() )
+    conn.create_function('st_MakeEnvelope', 4, lambda xmin,ymin,xmax,ymax: Geometry(shp=box(xmin,ymin,xmax,ymax)).dump_wkb() )
+    conn.create_function('st_GeomFromText', 1, lambda wkt: Geometry(shp=wkt_loads(wkt)).dump_wkb() )
+    conn.create_function('st_GeomFromGeoJSON', 1, lambda geojstr: Geometry(shp=asShape(json.loads(geojstr))).dump_wkb() )
 
     # representation
     conn.create_function('st_AsText', 1, lambda wkb: Geometry(wkb).as_WKT() if wkb != None else None )
@@ -107,7 +111,7 @@ class ST_Extent(object):
             self.boxes = []
         # return result
         xmin,ymin,xmax,ymax = self.result
-        pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
+        pointbox = Geometry(shp=MultiPoint([(xmin,ymin),(xmax,ymax)]))
         return pointbox.dump_wkb()
 
 class ST_Union(object):
@@ -143,7 +147,7 @@ class ST_Union(object):
                 # first
                 self.result = chunk_result
 
-        resultgeom = Geometry(self.result.wkb)
+        resultgeom = Geometry(shp=self.result)
         return resultgeom.dump_wkb()
 
 # class
@@ -152,16 +156,18 @@ CACHE = dict()
 
 class Geometry(object):
 
-    def __init__(self, wkb):
+    def __init__(self, wkb=None, shp=None):
+        if wkb:
+            wkb = memoryview(wkb)
         self._wkb = wkb
-        self._shp = None
+        self._shp = shp
 
     def _load_shapely(self):
         '''wkb buffer to shapely'''
         # TODO: its possible that each reference to geom column in query creates a new geom instance from the db for each
         # in that case, storing ._shp doesnt help and shapely creation becomes very duplicative
         # explore accessing a dict of cached geometry instances based on the wkb bytes?
-##        wkb_bytes = bytes(self._wkb)
+##        wkb_bytes = self._wkb.tobytes()
 ##        cached = CACHE.get(wkb_bytes, None)
 ##        if cached:
 ##            #print 'getting cached'
@@ -173,8 +179,7 @@ class Geometry(object):
 ##        self._shp = shp
 
         # non-cache approach
-        self._shp = wkb_loads(bytes(self._wkb))
-        self._wkb = None # avoid storing both shp and wkb at same time
+        self._shp = wkb_loads(self._wkb.tobytes())
 
     # dont require shapely (ie reading binary directly)
 
@@ -301,12 +306,12 @@ class Geometry(object):
 
     def box2d(self):
         xmin,ymin,xmax,ymax = self.bbox()
-        pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
+        pointbox = Geometry(shp=MultiPoint([(xmin,ymin),(xmax,ymax)]))
         return pointbox
 
     def envelope(self):
         xmin,ymin,xmax,ymax = self.bbox()
-        polygon = Geometry(Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)]).wkb)
+        polygon = Geometry(shp=Polygon([(xmin,ymin),(xmin,ymax),(xmax,ymax),(xmax,ymin),(xmin,ymin)]))
         return polygon
 
     def expand(self, units):
@@ -317,7 +322,7 @@ class Geometry(object):
         xmax += units
         ymin -= units
         ymax += units
-        pointbox = Geometry(MultiPoint([(xmin,ymin),(xmax,ymax)]).wkb)
+        pointbox = Geometry(shp=MultiPoint([(xmin,ymin),(xmax,ymax)]))
         return pointbox
 
     def area(self):
@@ -558,7 +563,7 @@ class Geometry(object):
         out._load_header()
         arr = np.array(img)
         # TODO: prob outsource to builtin add_band() method
-        wkb = bytes(out._wkb)
+        wkb = out._wkb.tobytes()
         dtypes = ['b1', 'u1', 'u1', 'i1', 'u1', 'i2',
                   'u2', 'i4', 'u4', 'f4', 'f8']
         pixeltypenum = dtypes.index(pixeltype)
@@ -571,8 +576,8 @@ class Geometry(object):
         wkb += out._write_band_header(bandheader)
         wkb += arr.tostring()
 
-        wkb_buf = buffer(wkb)
-        rast = Raster(wkb_buf)
+        wkb_mem = memoryview(wkb)
+        rast = Raster(wkb_mem)
         return rast
             
 
@@ -606,16 +611,14 @@ class Geometry(object):
         if not self._shp:
             self._load_shapely()
         shp = self._shp.centroid
-        geom = Geometry(shp.wkb)
-        geom._shp = shp
+        geom = Geometry(shp=shp)
         return geom
 
     def buffer(self, dist):
         if not self._shp:
             self._load_shapely()
         shp = self._shp.buffer(dist)
-        geom = Geometry(shp.wkb)
-        geom._shp = shp
+        geom = Geometry(shp=shp)
         return geom
 
     def intersection(self, othergeom):
@@ -624,8 +627,7 @@ class Geometry(object):
         if not othergeom._shp:
             othergeom._load_shapely()
         shp = self._shp.intersection(othergeom._shp)
-        geom = Geometry(shp.wkb)
-        geom._shp = shp
+        geom = Geometry(shp=shp)
         return geom
 
     def difference(self, othergeom):
@@ -634,8 +636,7 @@ class Geometry(object):
         if not othergeom._shp:
             othergeom._load_shapely()
         shp = self._shp.difference(othergeom._shp)
-        geom = Geometry(shp.wkb)
-        geom._shp = shp
+        geom = Geometry(shp=shp)
         return geom
 
     def union(self, othergeom):
@@ -644,30 +645,35 @@ class Geometry(object):
         if not othergeom._shp:
             othergeom._load_shapely()
         shp = self._shp.union(othergeom._shp)
-        geom = Geometry(shp.wkb)
-        geom._shp = shp
+        geom = Geometry(shp=shp)
         return geom
 
     def simplify(self, tolerance, preserve_topology=True):
         if not self._shp:
             self._load_shapely()
         shp = self._shp.simplify(tolerance, preserve_topology=preserve_topology)
-        geom = Geometry(shp.wkb)
-        geom._shp = shp
+        geom = Geometry(shp=shp)
         return geom
     
     # serializing
 
     def dump_wkb(self):
-        # shapely to wkb buffer
-        if self._shp:
+        # geometry memoryview to sqlite3 db blob
+        # py2: db requires buffer, py3: db requires memview
+        if self._wkb:
+            # use existing wkb
+            wkb_mem = self._wkb
+        elif self._shp != None:
+            # if no wkb, then dump from shp
             if self._shp.is_empty:
                 return None
-            wkb = self._shp.wkb
+            wkb_mem = memoryview(self._shp.wkb)
         else:
-            wkb = self._wkb
-        buf = Binary(wkb) # should this be used here, or only in the final serializer? 
-        return buf
+            raise Exception('Geometry must have _wkb or _shp, but has neither')
+            
+        if PY2:
+            wkb_mem = buffer(wkb_mem.tobytes())
+        return Binary(wkb_mem)
 
 
 
