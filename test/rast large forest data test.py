@@ -42,7 +42,7 @@ print 'forest', cur.execute('select count(oid) from forest').fetchone()
 print 'countries', cur.execute('select count(oid) from countries').fetchone()
 
 for row in cur.execute('''select name from forest,countries
-                            where st_intersects(geom, rt_envelope(rast))
+                            where st_intersects(st_envelope(geom), rt_envelope(rast))
                             limit 10
                             '''):
     print row
@@ -50,7 +50,7 @@ for row in cur.execute('''select name from forest,countries
 for row in cur.execute('''select countries.name, rt_summarystatsAgg(forest.rast, 1)
                             from forest,countries
                             where countries.name = 'Brazil'
-                            and st_intersects(countries.geom, rt_envelope(forest.rast))
+                            and st_intersects(st_envelope(countries.geom), rt_envelope(forest.rast))
                             '''):
     print row
 
